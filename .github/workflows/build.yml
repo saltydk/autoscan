@@ -96,7 +96,7 @@ jobs:
       - name: publish
         if: startsWith(github.ref, 'refs/tags/')
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           GITHUB_REF: ${{ github.ref }}
         run: |
           task publish
@@ -174,7 +174,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            cloudb0x/autoscan:${{ steps.dockertag.outputs.replaced }}
+            saltydk/autoscan:${{ steps.dockertag.outputs.replaced }}
 
       # cleanup
       - name: cleanup
