@@ -143,8 +143,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            cloudb0x/autoscan:${{ steps.releasetag.outputs.tag }}
-            cloudb0x/autoscan:latest
+            saltydk/autoscan:${{ steps.releasetag.outputs.tag }}
+            saltydk/autoscan:latest
 
       # docker build (branch)
       - name: branch name
