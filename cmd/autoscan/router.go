@@ -11,13 +11,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/cloudbox/autoscan/processor"
-	"github.com/cloudbox/autoscan/triggers/a_train"
-	"github.com/cloudbox/autoscan/triggers/lidarr"
-	"github.com/cloudbox/autoscan/triggers/manual"
-	"github.com/cloudbox/autoscan/triggers/radarr"
-	"github.com/cloudbox/autoscan/triggers/readarr"
-	"github.com/cloudbox/autoscan/triggers/sonarr"
+	"github.com/saltydk/autoscan/processor"
+	"github.com/saltydk/autoscan/triggers/a_train"
+	"github.com/saltydk/autoscan/triggers/lidarr"
+	"github.com/saltydk/autoscan/triggers/manual"
+	"github.com/saltydk/autoscan/triggers/radarr"
+	"github.com/saltydk/autoscan/triggers/readarr"
+	"github.com/saltydk/autoscan/triggers/sonarr"
 )
 
 func pattern(name string) string {

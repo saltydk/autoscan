@@ -21,7 +21,7 @@ Autoscan also improves upon [Plex Autoscan](https://github.com/l3uddz/plex_autos
 
 ## Installing autoscan
 
-Autoscan offers [pre-compiled binaries](https://github.com/Cloudbox/autoscan/releases/latest) for both Linux and MacOS for each official release. In addition, we also offer a [Docker image](#docker)!
+Autoscan offers [pre-compiled binaries](https://github.com/saltydk/autoscan/releases/latest) for both Linux and MacOS for each official release. In addition, we also offer a [Docker image](#docker)!
 
 Alternatively, you can build the Autoscan binary yourself.
 To build the autoscan CLI on your system, make sure:
@@ -581,29 +581,3 @@ Autoscan's Docker image supports the following parameters.
 | `-v /config` | Autoscan's config and database file |
 
 Any other volumes can be referenced within Autoscan's config file `config.yml`, assuming it has been specified as a volume.
-
-#### Cloudbox
-
-The following Docker setup should work for many Cloudbox users.
-
-**WARNING: You still need to configure the `config.yml` file!**
-
-Make sure to replace `DOMAIN.TLD` with your domain and `YOUR_EMAIL` with your email.
-
-```bash
-docker run \
-  --name=autoscan \
-  -e "PUID=1000" \
-  -e "PGID=1001" \
-  -e "VIRTUAL_HOST=autoscan.DOMAIN.TLD" \
-  -e "VIRTUAL_PORT=3030" \
-  -e "LETSENCRYPT_HOST=autoscan.DOMAIN.TLD" \
-  -e "LETSENCRYPT_EMAIL=YOUR_EMAIL" \
-  -v "/opt/autoscan:/config" \
-  -v "/mnt:/mnt:ro" \
-  --label="com.github.cloudbox.cloudbox_managed=true" \
-  --network=cloudbox \
-  --network-alias=autoscan  \
-  --restart=unless-stopped \
-  -d cloudb0x/autoscan
-```

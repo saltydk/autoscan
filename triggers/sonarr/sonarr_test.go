@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudbox/autoscan"
+	"github.com/saltydk/autoscan"
 )
 
 func TestHandler(t *testing.T) {

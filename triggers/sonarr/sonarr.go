@@ -9,7 +9,7 @@ import (
 
 	"github.com/rs/zerolog/hlog"
 
-	"github.com/cloudbox/autoscan"
+	"github.com/saltydk/autoscan"
 )
 
 type Config struct {
