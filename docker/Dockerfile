@@ -11,6 +11,8 @@ ENV \
   AUTOSCAN_LOG="/config/activity.log" \
   AUTOSCAN_VERBOSITY="0"
 
+RUN apk del python3
+
 # Binary
 COPY ["dist/autoscan_${TARGETOS}_${TARGETARCH}${TARGETVARIANT:+_7}/autoscan", "/app/autoscan/autoscan"]
 
