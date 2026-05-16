@@ -1,4 +1,4 @@
-FROM saltydk/alpine-s6overlay:latest
+FROM lscr.io/linuxserver/baseimage-alpine:3.23
 
 ARG TARGETOS
 ARG TARGETARCH
