@@ -1,4 +1,6 @@
-FROM saltydk/alpine-s6overlay:latest
+ARG OS_TAG=latest
+
+FROM saltydk/alpine-s6overlay:${OS_TAG}
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -12,7 +14,7 @@ ENV \
   AUTOSCAN_VERBOSITY="0"
 
 # Binary
-COPY ["dist/autoscan_${TARGETOS}_${TARGETARCH}${TARGETVARIANT:+_7}/autoscan", "/app/autoscan/autoscan"]
+COPY ["dist/docker/${TARGETOS}_${TARGETARCH}${TARGETVARIANT:+_7}/autoscan", "/app/autoscan/autoscan"]
 
 # Add root files
 COPY ["docker/run", "/etc/services.d/autoscan/run"]

@@ -10,64 +10,57 @@ on:
     branches:
       - master
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # dependencies
-      - name: goreleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          install-only: true
-          version: 1.7.0
-
-      - name: goreleaser info
-        run: goreleaser -v
-
-      - name: task
-        uses: arduino/setup-task@v2
-
-      - name: task info
-        run: task --version
-
-      - name: qemu
-        if: github.event.pull_request.head.repo.fork == false
-        uses: docker/setup-qemu-action@v3
-
-      - name: buildx
-        if: github.event.pull_request.head.repo.fork == false
-        uses: docker/setup-buildx-action@v3
-
       # checkout
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       # setup go
       - name: go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version: 1.19
+          go-version: 1.26.5
+          cache: true
 
       - name: go info
         run: |
           go version
           go env
 
-      # cache
-      - name: cache-go
-        uses: actions/cache@v4
+      # dependencies
+      - name: goreleaser
+        uses: goreleaser/goreleaser-action@v7
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-cache-mod
+          install-only: true
+          version: v2.17.1
+
+      - name: goreleaser info
+        run: goreleaser -v
+
+      - name: task
+        uses: arduino/setup-task@v3
+
+      - name: task info
+        run: task --version
+
+      - name: qemu
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: docker/setup-qemu-action@v4
+
+      - name: buildx
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: docker/setup-buildx-action@v4
 
       - name: cache-task
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .task/**/*
           key: ${{ runner.os }}-go-task
@@ -101,39 +94,67 @@ jobs:
         run: |
           task publish
 
+      # docker context
+      - name: prepare docker context
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        run: |
+          set -euo pipefail
+
+          stage_binary() {
+            local goarch="$1"
+            local goarm="$2"
+            local destination="$3"
+            local source
+
+            source=$(jq -r \
+              --arg goarch "$goarch" \
+              --arg goarm "$goarm" \
+              '[.[] | select(
+                .type == "Binary"
+                and .goos == "linux"
+                and .goarch == $goarch
+                and ((.goarm // "") == $goarm)
+              )][0].path // empty' \
+              dist/artifacts.json)
+
+            test -n "$source"
+            install -Dm755 "$source" "$destination"
+          }
+
+          stage_binary amd64 "" dist/docker/linux_amd64/autoscan
+          stage_binary arm64 "" dist/docker/linux_arm64/autoscan
+          stage_binary arm 7 dist/docker/linux_arm_7/autoscan
+
       # artifacts
       - name: artifact_linux
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build_linux
           path: dist/*linux*
 
       - name: artifact_darwin
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build_darwin
           path: dist/*darwin*
 
       # docker login
       - name: docker login
-        if: github.event.pull_request.head.repo.fork == false
-        env:
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-        run: |
-          echo "${DOCKER_PASSWORD}" | docker login --username "${DOCKER_USERNAME}" --password-stdin
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       # docker build (latest & tag)
       - name: release tag
-        if: startsWith(github.ref, 'refs/tags/') == true && github.event.pull_request.head.repo.fork == false
-        uses: little-core-labs/get-git-tag@v3.0.2
+        if: startsWith(github.ref, 'refs/tags/') == true
         id: releasetag
-        with:
-          tagRegex: "v?(.+)"
+        run: echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: docker - build release
-        if: startsWith(github.ref, 'refs/tags/') == true && github.event.pull_request.head.repo.fork == false
-        uses: docker/build-push-action@v6
+        if: startsWith(github.ref, 'refs/tags/') == true
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./docker/Dockerfile
@@ -147,24 +168,18 @@ jobs:
             saltydk/autoscan:latest
 
       # docker build (branch)
-      - name: branch name
-        if: startsWith(github.ref, 'refs/tags/') == false && github.event.pull_request.head.repo.fork == false
-        id: branch-name
-        uses: tj-actions/branch-names@v8
-
       - name: docker tag
-        if: startsWith(github.ref, 'refs/tags/') == false && github.event.pull_request.head.repo.fork == false
-        uses: frabert/replace-string-action@v2.5
+        if: startsWith(github.ref, 'refs/tags/') == false && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
         id: dockertag
-        with:
-          pattern: '[:\.\/]+'
-          string: "${{ steps.branch-name.outputs.current_branch }}"
-          replace-with: '-'
-          flags: 'g'
+        env:
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        run: |
+          tag=$(printf '%s' "$BRANCH_NAME" | sed -E 's/[:.\/]+/-/g')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: docker - build branch
-        if: startsWith(github.ref, 'refs/tags/') == false && github.event.pull_request.head.repo.fork == false
-        uses: docker/build-push-action@v6
+        if: startsWith(github.ref, 'refs/tags/') == false && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./docker/Dockerfile
@@ -174,10 +189,4 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            saltydk/autoscan:${{ steps.dockertag.outputs.replaced }}
-
-      # cleanup
-      - name: cleanup
-        if: github.event.pull_request.head.repo.fork == false
-        run: |
-          rm -f ${HOME}/.docker/config.json
+            saltydk/autoscan:${{ steps.dockertag.outputs.tag }}
