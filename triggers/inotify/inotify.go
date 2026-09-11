@@ -49,8 +49,6 @@ func New(c Config) (autoscan.Trigger, error) {
 
 	var paths []path
 	for _, p := range c.Paths {
-		p := p
-
 		rewriter, err := autoscan.NewRewriter(append(p.Rewrite, c.Rewrite...))
 		if err != nil {
 			return nil, err

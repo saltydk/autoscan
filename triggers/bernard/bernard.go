@@ -66,8 +66,6 @@ func New(c Config, db *sql.DB) (autoscan.Trigger, error) {
 
 	var drives []drive
 	for _, d := range c.Drives {
-		d := d
-
 		rewriter, err := autoscan.NewRewriter(append(d.Rewrite, c.Rewrite...))
 		if err != nil {
 			return nil, err
@@ -211,7 +209,6 @@ func (d daemon) startAutoSync() error {
 	c := cron.New()
 
 	for _, drive := range d.drives {
-		drive := drive
 		fullSync := false
 		l := d.withDriveLog(drive.ID)
 

@@ -27,7 +27,7 @@ jobs:
       - name: go
         uses: actions/setup-go@v7
         with:
-          go-version: 1.26.5
+          go-version-file: go.mod
           cache: true
 
       - name: go info
@@ -40,13 +40,15 @@ jobs:
         uses: goreleaser/goreleaser-action@v7
         with:
           install-only: true
-          version: v2.17.1
+          version: v2.18.1
 
       - name: goreleaser info
         run: goreleaser -v
 
       - name: task
         uses: arduino/setup-task@v3
+        with:
+          version: 3.53.1
 
       - name: task info
         run: task --version

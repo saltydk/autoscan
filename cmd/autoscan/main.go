@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/natefinch/lumberjack"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"gopkg.in/yaml.v2"
 
 	"github.com/saltydk/autoscan"

@@ -39,7 +39,7 @@ type Processor struct {
 	anchors    []string
 	minimumAge time.Duration
 	store      *datastore
-	processed  int64
+	processed  atomic.Int64
 }
 
 func (p *Processor) Add(scans ...autoscan.Scan) error {
@@ -53,7 +53,7 @@ func (p *Processor) ScansRemaining() (int, error) {
 
 // ScansProcessed returns the amount of scans processed
 func (p *Processor) ScansProcessed() int64 {
-	return atomic.LoadInt64(&p.processed)
+	return p.processed.Load()
 }
 
 // CheckAvailability checks whether all targets are available.
@@ -62,7 +62,6 @@ func (p *Processor) CheckAvailability(targets []autoscan.Target) error {
 	g := new(errgroup.Group)
 
 	for _, target := range targets {
-		target := target
 		g.Go(func() error {
 			return target.Available()
 		})
@@ -75,7 +74,6 @@ func (p *Processor) callTargets(targets []autoscan.Target, scan autoscan.Scan) e
 	g := new(errgroup.Group)
 
 	for _, target := range targets {
-		target := target
 		g.Go(func() error {
 			return target.Scan(scan)
 		})
@@ -108,7 +106,7 @@ func (p *Processor) Process(targets []autoscan.Target) error {
 		return err
 	}
 
-	atomic.AddInt64(&p.processed, 1)
+	p.processed.Add(1)
 	return nil
 }
 

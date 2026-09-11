@@ -26,10 +26,11 @@ tasks:
     desc: Go vendor
     sources:
       - '**/*.go'
+      - ./go.mod
       - ./go.sum
     cmds:
-      - go mod vendor
       - go mod tidy
+      - go mod vendor
 
   vendor_update:
     desc: Go vendor update
