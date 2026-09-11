@@ -536,7 +536,7 @@ host:
 
 ### Docker
 
-Autoscan has an accompanying docker image which can be found on [Docker Hub](https://hub.docker.com/r/cloudb0x/autoscan).
+Autoscan has an accompanying docker image which can be found on [Docker Hub](https://hub.docker.com/r/saltydk/autoscan).
 
 Autoscan requires access to all files being passed between the triggers and the targets. \
 *Just mount the source directory, for many people this is `/mnt/unionfs`.*
@@ -564,7 +564,7 @@ docker run \
   -v "/opt/autoscan:/config" \
   -v "/mnt/unionfs:/mnt/unionfs:ro" \
   --restart=unless-stopped \
-  -d cloudb0x/autoscan
+  -d saltydk/autoscan
 ```
 
 #### Parameters
@@ -580,3 +580,47 @@ Autoscan's Docker image supports the following parameters.
 | `-v /config` | Autoscan's config and database file |
 
 Any other volumes can be referenced within Autoscan's config file `config.yml`, assuming it has been specified as a volume.
+
+### Building Docker images
+
+The image uses the shared `saltydk/alpine-s6overlay` base pinned by source commit
+and multi-platform manifest digest. The base owns the Alpine packages; Autoscan
+adds its compiled binary and s6 service without changing that package inventory.
+The existing `/config` mount, port 3030, `PUID`/`PGID`, and `AUTOSCAN_*`
+environment variables continue to work.
+
+Build the release binaries and stage the Linux artifacts before building an image:
+
+```bash
+task snapshot
+python3 scripts/image.py base verify
+python3 scripts/image.py stage
+docker buildx build --platform linux/amd64 -f docker/Dockerfile --load -t local/autoscan .
+scripts/test-image.sh local/autoscan linux/amd64 x86_64 "$(git rev-parse --short HEAD)"
+```
+
+The same Dockerfile supports `linux/arm64` and `linux/arm/v7`. Running acceptance
+checks for another architecture requires QEMU or a matching native runner.
+Staging reads GoReleaser's artifact metadata so compiler-specific directory
+suffixes do not affect the build.
+
+To inspect a base update, run `python3 scripts/image.py base update`. Add `--write`
+to update the Dockerfile after the resolver has verified the source tag, digest,
+and matching revision labels on all three platforms. `base verify` checks the
+committed pin, so historical builds do not require the base to remain `latest`.
+The base updater owns this pin; Renovate manages other supported dependencies.
+
+CI builds and boots each platform, checks the authenticated webhook and service
+user, verifies the inherited package inventory, and applies the shared Trivy and
+Docker Scout policies. Trivy blocks fixable HIGH/CRITICAL vulnerabilities; Scout
+also blocks CISA KEV findings. Credential-dependent Scout checks run outside pull
+requests. SARIF reports and explicit per-platform outcomes are retained as
+artifacts. Pull requests do not publish images.
+
+After all candidates pass, CI publishes a unique source/run-tagged candidate with
+an SBOM, verifies its platform identities and attestations, and promotes that
+same manifest to the existing branch or release tags. Tag builds still publish
+GoReleaser binary releases. A moved source ref prevents Docker promotion.
+Daily workflows refresh the verified base pin and scan the published `master`
+and `latest` images. The base updater explicitly builds its committed source and
+retries pending publication even when the pin is unchanged.

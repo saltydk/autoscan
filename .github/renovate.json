@@ -1,0 +1,12 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits", ":ignoreUnstable"],
+  "packageRules": [
+    {
+      "description": "The base updater owns the verified source tag and manifest digest together",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["saltydk/alpine-s6overlay"],
+      "enabled": false
+    }
+  ]
+}

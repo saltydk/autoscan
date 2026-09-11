@@ -1,0 +1,105 @@
+name: Scan image
+description: Apply the shared Alpine image vulnerability policies
+inputs:
+  image:
+    required: true
+    description: Local or registry image reference
+  platform:
+    required: true
+    description: Image platform
+  report-name:
+    required: true
+    description: Unique report artifact prefix
+  scout-enabled:
+    default: 'false'
+    description: Run authenticated Scout checks outside pull requests
+  docker-username:
+    default: ''
+    description: Docker Hub username
+  docker-password:
+    default: ''
+    description: Docker Hub token
+outputs:
+  trivy:
+    description: Trivy policy outcome
+    value: ${{ steps.trivy-policy.outcome }}
+  scout-fixed:
+    description: Scout fixable vulnerability outcome
+    value: ${{ steps.scout-fixed.outcome }}
+  scout-kev:
+    description: Scout CISA KEV outcome
+    value: ${{ steps.scout-kev.outcome }}
+runs:
+  using: composite
+  steps:
+    - uses: aquasecurity/setup-trivy@v0.3.1
+      with:
+        cache: true
+        version: v0.74.0
+    - name: Trivy report
+      if: ${{ !cancelled() }}
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        REPORT: ${{ inputs.report-name }}
+      run: >-
+        trivy image --quiet --scanners vuln --severity HIGH,CRITICAL
+        --format sarif --output "trivy-${REPORT}.sarif" "$IMAGE"
+    - name: Trivy policy
+      id: trivy-policy
+      if: ${{ !cancelled() }}
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: >-
+        trivy image --quiet --scanners vuln --severity HIGH,CRITICAL
+        --ignore-unfixed --exit-code 1 "$IMAGE"
+    - name: Scout report
+      if: ${{ !cancelled() && inputs.scout-enabled == 'true' }}
+      uses: docker/scout-action@v1.24.0
+      with:
+        command: cves
+        image: ${{ inputs.image }}
+        platform: ${{ inputs.platform }}
+        dockerhub-user: ${{ inputs.docker-username }}
+        dockerhub-password: ${{ inputs.docker-password }}
+        sarif-file: scout-${{ inputs.report-name }}.sarif
+        write-comment: false
+    - name: Scout fixable vulnerabilities
+      id: scout-fixed
+      if: ${{ !cancelled() && inputs.scout-enabled == 'true' }}
+      uses: docker/scout-action@v1.24.0
+      with:
+        command: cves
+        image: ${{ inputs.image }}
+        platform: ${{ inputs.platform }}
+        dockerhub-user: ${{ inputs.docker-username }}
+        dockerhub-password: ${{ inputs.docker-password }}
+        only-fixed: true
+        only-severities: critical,high
+        exit-code: true
+        summary: false
+        write-comment: false
+    - name: Scout CISA KEV
+      id: scout-kev
+      if: ${{ !cancelled() && inputs.scout-enabled == 'true' }}
+      uses: docker/scout-action@v1.24.0
+      with:
+        command: cves
+        image: ${{ inputs.image }}
+        platform: ${{ inputs.platform }}
+        dockerhub-user: ${{ inputs.docker-username }}
+        dockerhub-password: ${{ inputs.docker-password }}
+        only-cisa-kev: true
+        exit-code: true
+        summary: false
+        write-comment: false
+    - name: Retain scanner reports
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: security-${{ inputs.report-name }}
+        path: |
+          trivy-${{ inputs.report-name }}.sarif
+          scout-${{ inputs.report-name }}.sarif
+        if-no-files-found: warn

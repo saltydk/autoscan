@@ -1,6 +1,6 @@
-ARG OS_TAG=latest
+ARG BASE_IMAGE="saltydk/alpine-s6overlay:sha-b5833aa681474b603012c55469e71e6dcf3cbbe8@sha256:68a9a5eea67e67a314569b0452590c260c80ddcfa23a4debf984904f1248a480"
 
-FROM saltydk/alpine-s6overlay:${OS_TAG}
+FROM ${BASE_IMAGE}
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -18,6 +18,9 @@ COPY ["dist/docker/${TARGETOS}_${TARGETARCH}${TARGETVARIANT:+_7}/autoscan", "/ap
 
 # Add root files
 COPY ["docker/run", "/etc/services.d/autoscan/run"]
+
+ARG BASE_IMAGE
+LABEL org.opencontainers.image.base.name="${BASE_IMAGE}"
 
 # Volume
 VOLUME ["/config"]

@@ -1,0 +1,63 @@
+name: Published image security
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '37 5 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autoscan-published-security
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - name: Freeze published manifests
+        id: matrix
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, re, subprocess
+          entries = []
+          for tag in ("latest", "master"):
+              image = "saltydk/autoscan:" + tag
+              data = json.loads(subprocess.check_output(["docker", "buildx", "imagetools", "inspect", image, "--format", "{{json .Manifest}}"], text=True))
+              digest = data["digest"]
+              if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                  raise ValueError("invalid published digest")
+              for platform, slug in (("linux/amd64", "amd64"), ("linux/arm64", "arm64"), ("linux/arm/v7", "armv7")):
+                  entries.append({"tag": tag, "platform": platform, "slug": slug, "image": "saltydk/autoscan@" + digest})
+          print("matrix=" + json.dumps({"include": entries}))
+          PY
+      - name: Prime scanner cache
+        uses: aquasecurity/setup-trivy@v0.3.1
+        with:
+          cache: true
+          version: v0.74.0
+  scan:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Pull exact platform
+        env:
+          IMAGE: ${{ matrix.image }}
+          PLATFORM: ${{ matrix.platform }}
+        run: docker pull --platform "$PLATFORM" "$IMAGE"
+      - uses: ./.github/actions/scan-image
+        with:
+          image: ${{ matrix.image }}
+          platform: ${{ matrix.platform }}
+          report-name: published-${{ matrix.tag }}-${{ matrix.slug }}
+          scout-enabled: 'true'
+          docker-username: ${{ secrets.DOCKER_USERNAME }}
+          docker-password: ${{ secrets.DOCKER_PASSWORD }}

@@ -2,193 +2,270 @@ name: Build
 
 on:
   push:
-    branches:
-      - '*'
-    tags:
-      - 'v*'
+    branches: ['*']
+    tags: ['v*']
   pull_request:
-    branches:
-      - master
+    branches: [master]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      source-sha:
+        description: Exact committed source selected by the base updater
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: autoscan-build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
+      short-sha: ${{ steps.source.outputs.short-sha }}
     steps:
-      # checkout
-      - name: checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-
-      # setup go
-      - name: go
-        uses: actions/setup-go@v7
+          ref: ${{ inputs.source-sha || github.event.pull_request.head.sha || github.sha }}
+      - name: Record source
+        id: source
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short-sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: go info
-        run: |
-          go version
-          go env
-
-      # dependencies
-      - name: goreleaser
-        uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@v7
         with:
           install-only: true
           version: v2.18.1
-
-      - name: goreleaser info
-        run: goreleaser -v
-
-      - name: task
-        uses: arduino/setup-task@v3
+      - uses: arduino/setup-task@v3
         with:
           version: 3.53.1
-
-      - name: task info
-        run: task --version
-
-      - name: qemu
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
-        uses: docker/setup-qemu-action@v4
-
-      - name: buildx
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
-        uses: docker/setup-buildx-action@v4
-
-      - name: cache-task
-        uses: actions/cache@v6
-        with:
-          path: .task/**/*
-          key: ${{ runner.os }}-go-task
-
-      # vendor
-      - name: vendor
+      - uses: docker/setup-buildx-action@v4
+      - name: Check image tooling and base
         run: |
+          python3 -m unittest discover -s tests -v
+          python3 scripts/image.py base verify
+          shellcheck scripts/test-image.sh
+          shellcheck -s sh docker/run
+      - name: Check workflows
+        uses: docker://rhysd/actionlint:1.7.12
+      - name: Verify Go
+        run: |
+          go mod tidy -diff
           task vendor
-
-      # test
-      - name: tests
-        run: |
           task test
-
-      # git status
-      - name: git status
-        run: git status
-
-      # build
-      - name: build
-        if: startsWith(github.ref, 'refs/tags/') == false
-        run: |
-          task snapshot
-
-      # publish
-      - name: publish
+          go vet ./...
+          go mod verify
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - name: Build snapshot
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: task snapshot
+      - name: Publish binary release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           GITHUB_REF: ${{ github.ref }}
-        run: |
-          task publish
-
-      # docker context
-      - name: prepare docker context
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
-        run: |
-          set -euo pipefail
-
-          stage_binary() {
-            local goarch="$1"
-            local goarm="$2"
-            local destination="$3"
-            local source
-
-            source=$(jq -r \
-              --arg goarch "$goarch" \
-              --arg goarm "$goarm" \
-              '[.[] | select(
-                .type == "Binary"
-                and .goos == "linux"
-                and .goarch == $goarch
-                and ((.goarm // "") == $goarm)
-              )][0].path // empty' \
-              dist/artifacts.json)
-
-            test -n "$source"
-            install -Dm755 "$source" "$destination"
-          }
-
-          stage_binary amd64 "" dist/docker/linux_amd64/autoscan
-          stage_binary arm64 "" dist/docker/linux_arm64/autoscan
-          stage_binary arm 7 dist/docker/linux_arm_7/autoscan
-
-      # artifacts
-      - name: artifact_linux
-        uses: actions/upload-artifact@v7
+        run: task publish
+      - name: Stage Docker binaries
+        run: python3 scripts/image.py stage
+      - uses: actions/upload-artifact@v7
+        with:
+          name: docker-binaries
+          path: dist/docker/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
         with:
           name: build_linux
           path: dist/*linux*
-
-      - name: artifact_darwin
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7
         with:
           name: build_darwin
           path: dist/*darwin*
+      - name: Prime scanner cache
+        uses: aquasecurity/setup-trivy@v0.3.1
+        with:
+          cache: true
+          version: v0.74.0
 
-      # docker login
-      - name: docker login
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
-        uses: docker/login-action@v4
+  test-image:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: x86_64
+            slug: amd64
+          - platform: linux/arm64
+            arch: aarch64
+            slug: arm64
+          - platform: linux/arm/v7
+            arch: armv7l
+            slug: armv7
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.build.outputs.source-sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-binaries
+          path: dist/docker
+      - run: chmod +x dist/docker/*/autoscan
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Build candidate
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          pull: true
+          tags: local/autoscan:${{ matrix.slug }}
+          labels: org.opencontainers.image.revision=${{ needs.build.outputs.source-sha }}
+          cache-from: type=gha,scope=autoscan-${{ matrix.slug }}
+          cache-to: type=gha,scope=autoscan-${{ matrix.slug }},mode=max
+      - name: Test runtime
+        id: runtime
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+          IMAGE: local/autoscan:${{ matrix.slug }}
+          SOURCE_SHORT_SHA: ${{ needs.build.outputs.short-sha }}
+        run: scripts/test-image.sh "$IMAGE" "$PLATFORM" "$ARCH" "$SOURCE_SHORT_SHA"
+      - name: Scan candidate
+        id: scan
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/scan-image
+        with:
+          image: local/autoscan:${{ matrix.slug }}
+          platform: ${{ matrix.platform }}
+          report-name: candidate-${{ matrix.slug }}
+          scout-enabled: ${{ github.event_name != 'pull_request' }}
+          docker-username: ${{ secrets.DOCKER_USERNAME }}
+          docker-password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Report candidate outcomes
+        if: always()
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SOURCE_SHA: ${{ needs.build.outputs.source-sha }}
+          RUNTIME: ${{ steps.runtime.outcome }}
+          TRIVY: ${{ steps.scan.outputs.trivy }}
+          SCOUT_FIXED: ${{ steps.scan.outputs.scout-fixed }}
+          SCOUT_KEV: ${{ steps.scan.outputs.scout-kev }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = {key.lower(): os.environ[key] or "unavailable" for key in
+                    ("PLATFORM", "SOURCE_SHA", "RUNTIME", "TRIVY", "SCOUT_FIXED", "SCOUT_KEV")}
+          Path("candidate.json").write_text(json.dumps(report, indent=2) + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"### {report['platform']}\n\n")
+              for key, value in report.items():
+                  summary.write(f"- {key}: `{value}`\n")
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: candidate-${{ matrix.slug }}
+          path: candidate.json
+          if-no-files-found: error
+
+  publish-image:
+    needs: [build, test-image]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.build.outputs.source-sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-binaries
+          path: dist/docker
+      - run: chmod +x dist/docker/*/autoscan
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # docker build (latest & tag)
-      - name: release tag
-        if: startsWith(github.ref, 'refs/tags/') == true
-        id: releasetag
-        run: echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: docker - build release
-        if: startsWith(github.ref, 'refs/tags/') == true
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./docker/Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
-          pull: true
-          push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          tags: |
-            saltydk/autoscan:${{ steps.releasetag.outputs.tag }}
-            saltydk/autoscan:latest
-
-      # docker build (branch)
-      - name: docker tag
-        if: startsWith(github.ref, 'refs/tags/') == false && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
-        id: dockertag
+      - name: Reject superseded source
         env:
-          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          SOURCE_SHA: ${{ needs.build.outputs.source-sha }}
+          SOURCE_REF: ${{ github.ref }}
         run: |
-          tag=$(printf '%s' "$BRANCH_NAME" | sed -E 's/[:.\/]+/-/g')
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - name: docker - build branch
-        if: startsWith(github.ref, 'refs/tags/') == false && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+          remote_sha=$(git ls-remote --exit-code origin "$SOURCE_REF" "${SOURCE_REF}^{}" | awk 'END {print $1}')
+          [[ "$remote_sha" == "$SOURCE_SHA" ]] || { echo 'Source ref moved; refusing publication.' >&2; exit 1; }
+      - name: Publish immutable candidate
+        id: image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./docker/Dockerfile
+          file: docker/Dockerfile
           platforms: linux/amd64,linux/arm64,linux/arm/v7
-          pull: true
           push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          tags: |
-            saltydk/autoscan:${{ steps.dockertag.outputs.tag }}
+          sbom: true
+          tags: saltydk/autoscan:sha-${{ needs.build.outputs.source-sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: org.opencontainers.image.revision=${{ needs.build.outputs.source-sha }}
+          cache-from: |
+            type=gha,scope=autoscan-amd64
+            type=gha,scope=autoscan-arm64
+            type=gha,scope=autoscan-armv7
+      - name: Verify and promote accepted manifest
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SOURCE_SHA: ${{ needs.build.outputs.source-sha }}
+          SOURCE_REF: ${{ github.ref }}
+        run: |
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          reference="saltydk/autoscan@${IMAGE_DIGEST}"
+          python3 scripts/image.py verify-publication "$reference" "$SOURCE_SHA"
+          remote_sha=$(git ls-remote --exit-code origin "$SOURCE_REF" "${SOURCE_REF}^{}" | awk 'END {print $1}')
+          [[ "$remote_sha" == "$SOURCE_SHA" ]] || { echo 'Source ref moved; refusing promotion.' >&2; exit 1; }
+          if [[ "$SOURCE_REF" == refs/tags/v* ]]; then
+            tags=("${SOURCE_REF#refs/tags/v}" latest)
+          else
+            tag=$(printf '%s' "${SOURCE_REF#refs/heads/}" | sed -E 's/[:.\/]+/-/g; s/[^a-zA-Z0-9_.-]+/-/g; s/^[.-]+//; s/^(.{128}).*/\1/')
+            test -n "$tag"
+            tags=("$tag")
+          fi
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools create --tag "saltydk/autoscan:${tag}" "$reference"
+            actual=$(docker buildx imagetools inspect "saltydk/autoscan:${tag}" --format '{{json .Manifest}}' | jq -r .digest)
+            [[ "$actual" == "$IMAGE_DIGEST" ]]
+            printf '%s@%s\n' "saltydk/autoscan:${tag}" "$IMAGE_DIGEST" >> published.txt
+          done
+      - name: Retain publication records
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: published-images
+          path: published.txt
+          if-no-files-found: warn
+
+  acceptance:
+    if: always()
+    needs: [build, test-image, publish-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize build acceptance
+        env:
+          BUILD: ${{ needs.build.result }}
+          TESTS: ${{ needs.test-image.result }}
+          PUBLISH: ${{ needs.publish-image.result }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          printf '| Stage | Result |\n| --- | --- |\n| Binaries | %s |\n| Image acceptance | %s |\n| Publication | %s |\n' \
+            "$BUILD" "$TESTS" "$PUBLISH" >> "$GITHUB_STEP_SUMMARY"
+          [[ "$BUILD" == success && "$TESTS" == success ]]
+          [[ "$EVENT" == pull_request || "$PUBLISH" == success ]]

@@ -1,0 +1,69 @@
+name: Update base image
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '19 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autoscan-base-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
+      rebuild: ${{ steps.source.outputs.rebuild }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v4
+      - name: Resolve and verify base
+        id: update
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 scripts/image.py base update --write --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+          python3 scripts/image.py base verify
+      - name: Commit resolved pin
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          git add docker/Dockerfile
+          git diff --cached --check
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'build(docker): refresh verified base image'
+          git push origin HEAD:master
+      - name: Select exact source and detect pending publication
+        id: source
+        run: |
+          source_sha=$(git rev-parse HEAD)
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          if docker buildx imagetools inspect saltydk/autoscan:master --format '{{json .Image}}' > published.json; then
+            SOURCE_SHA="$source_sha" python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          images = json.load(open("published.json"))
+          platforms = ("linux/amd64", "linux/arm64", "linux/arm/v7")
+          current = all(images.get(p, {}).get("config", {}).get("Labels", {}).get("org.opencontainers.image.revision") == os.environ["SOURCE_SHA"] for p in platforms)
+          print(f"rebuild={str(not current).lower()}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("\nPublished master: " + ("current" if current else "pending rebuild") + "\n")
+          PY
+          else
+            echo 'rebuild=true' >> "$GITHUB_OUTPUT"
+            echo 'Published master metadata unavailable; scheduling acceptance and publication.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  build:
+    needs: update
+    if: needs.update.outputs.rebuild == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      source-sha: ${{ needs.update.outputs.source-sha }}
+    secrets: inherit
