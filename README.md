@@ -428,8 +428,7 @@ targets:
 ```
 
 - URL. The URL can link to the docker container directly, the localhost or a reverse proxy sitting in front of Jellyfin.
-- Token. We need a Jellyfin API Token to make requests on your behalf. [This article](https://github.com/MediaBrowser/Emby/wiki/Api-Key-Authentication) should help you out. \
-  *It's a bit out of date, but I'm sure you will manage!*
+- Token. Create a Jellyfin API key under **Dashboard > Advanced > API Keys** and use it as the token. Autoscan uses Jellyfin's [current API authorization method](https://gist.github.com/nielsvanvelzen/ea047d9028f676185832e51ffaf12a6f), so no Jellyfin configuration changes or legacy authorization settings are needed.
 - Rewrite. If Jellyfin is not running on the host OS, but in a Docker container (or Autoscan is running in a Docker container), then you need to rewrite paths accordingly. Check out our [rewriting section](#rewriting-paths) for more info.
 
 ### Autoscan
