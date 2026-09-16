@@ -1,4 +1,4 @@
-ARG BASE_IMAGE="saltydk/alpine-s6overlay:sha-d4e041098b7f7a41c9f5be53071d4c170c56b99f@sha256:7584445edd87e2b58c6bf21aac3bcf5558d85073d88fa8e09c7f7d9d7b0026ba"
+ARG BASE_IMAGE="saltydk/alpine-s6overlay:sha-ff602c364340701f60f0eb46035f8f79e333ef14@sha256:6070e3207aaee623d15b2233ce9a6ddca7cd7f40a658b1894d47fe41cc7120d3"
 
 FROM ${BASE_IMAGE}
 
