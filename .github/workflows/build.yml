@@ -44,7 +44,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@v7
         with:
           install-only: true
-          version: v2.18.1
+          version: v2.18.2
       - uses: arduino/setup-task@v3
         with:
           version: 3.53.1
