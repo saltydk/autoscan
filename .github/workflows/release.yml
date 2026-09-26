@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autoscan-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  binary:
+    runs-on: ubuntu-latest
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require matching runtime recipes before publication
+        run: python3 scripts/image.py check-release
+      - name: Record release source
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - name: Check image tooling and bases
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 scripts/image.py --recipe master base verify
+          python3 scripts/image.py --recipe release base verify
+          shellcheck scripts/test-image.sh
+          shellcheck -s sh docker/master/run docker/release/run
+      - name: Check workflows
+        uses: docker://rhysd/actionlint:1.7.12
+      - uses: ./.github/actions/prepare-go
+      - name: Publish binary release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: task publish
+
+  image:
+    needs: binary
+    uses: ./.github/workflows/docker.yml
+    with:
+      recipe: release
+      source-sha: ${{ needs.binary.outputs.source-sha }}
+      source-ref: ${{ github.ref }}
+      release-tag: ${{ github.ref_name }}
+    secrets: inherit

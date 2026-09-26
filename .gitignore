@@ -2,6 +2,7 @@
 .idea/
 vendor/
 dist/
+docker/*/binaries/
 
 *.db
 *.log

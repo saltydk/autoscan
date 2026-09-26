@@ -1,0 +1,249 @@
+name: Docker image
+
+on:
+  workflow_call:
+    inputs:
+      recipe:
+        description: Runtime recipe to build (master or release)
+        required: true
+        type: string
+      source-sha:
+        description: Exact commit containing the runtime recipe
+        required: true
+        type: string
+      source-ref:
+        description: Ref that must still point to source-sha at publication
+        required: true
+        type: string
+      release-tag:
+        description: Published application release supplying stable binaries
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autoscan-docker-${{ inputs.recipe }}-${{ inputs.recipe == 'master' && inputs.source-ref || 'latest' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      binary-sha: ${{ steps.inputs.outputs.binary-sha }}
+      short-sha: ${{ steps.inputs.outputs.short-sha }}
+      version: ${{ steps.inputs.outputs.version }}
+      tags: ${{ steps.inputs.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-sha }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Select binary and publication inputs
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECIPE: ${{ inputs.recipe }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          python3 scripts/image.py --recipe "$RECIPE" prepare \
+            --source-sha "$SOURCE_SHA" --source-ref "$SOURCE_REF" \
+            --release-tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        if: inputs.recipe == 'release'
+        with:
+          name: docker-binaries-release
+          path: dist/docker/
+          if-no-files-found: error
+      - name: Prime scanner cache
+        uses: aquasecurity/setup-trivy@v0.3.1
+        with:
+          cache: true
+          version: v0.74.0
+
+  test-image:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: x86_64
+            slug: amd64
+          - platform: linux/arm64
+            arch: aarch64
+            slug: arm64
+          - platform: linux/arm/v7
+            arch: armv7l
+            slug: armv7
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-binaries-${{ inputs.recipe }}
+          path: docker/${{ inputs.recipe }}/binaries
+      - name: Restore executable bits
+        env:
+          RECIPE: ${{ inputs.recipe }}
+        run: chmod +x "docker/$RECIPE/binaries/"*/autoscan
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Build candidate
+        uses: docker/build-push-action@v7
+        with:
+          context: docker/${{ inputs.recipe }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          pull: true
+          tags: local/autoscan:${{ matrix.slug }}
+          labels: |
+            org.opencontainers.image.revision=${{ inputs.source-sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            io.autoscan.binary.revision=${{ needs.prepare.outputs.binary-sha }}
+          cache-from: type=gha,scope=autoscan-${{ inputs.recipe }}-${{ matrix.slug }}
+          cache-to: type=gha,scope=autoscan-${{ inputs.recipe }}-${{ matrix.slug }},mode=max
+      - name: Test runtime
+        id: runtime
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+          IMAGE: local/autoscan:${{ matrix.slug }}
+          BINARY_SHORT_SHA: ${{ needs.prepare.outputs.short-sha }}
+        run: scripts/test-image.sh "$IMAGE" "$PLATFORM" "$ARCH" "$BINARY_SHORT_SHA"
+      - name: Scan candidate
+        id: scan
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/scan-image
+        with:
+          image: local/autoscan:${{ matrix.slug }}
+          platform: ${{ matrix.platform }}
+          report-name: candidate-${{ inputs.recipe }}-${{ matrix.slug }}
+          scout-enabled: ${{ github.event_name != 'pull_request' }}
+          docker-username: ${{ secrets.DOCKER_USERNAME }}
+          docker-password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Report candidate outcomes
+        if: always()
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          BINARY_SHA: ${{ needs.prepare.outputs.binary-sha }}
+          RUNTIME: ${{ steps.runtime.outcome }}
+          TRIVY: ${{ steps.scan.outputs.trivy }}
+          SCOUT_FIXED: ${{ steps.scan.outputs.scout-fixed }}
+          SCOUT_KEV: ${{ steps.scan.outputs.scout-kev }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = {key.lower(): os.environ[key] or "unavailable" for key in
+                    ("PLATFORM", "SOURCE_SHA", "BINARY_SHA", "RUNTIME", "TRIVY", "SCOUT_FIXED", "SCOUT_KEV")}
+          Path("candidate.json").write_text(json.dumps(report, indent=2) + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"### {report['platform']}\n\n")
+              for key, value in report.items():
+                  summary.write(f"- {key}: `{value}`\n")
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: candidate-${{ inputs.recipe }}-${{ matrix.slug }}
+          path: candidate.json
+          if-no-files-found: error
+
+  publish-image:
+    needs: [prepare, test-image]
+    if: needs.prepare.outputs.tags != '[]'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RECIPE: ${{ inputs.recipe }}
+      SOURCE_SHA: ${{ inputs.source-sha }}
+      SOURCE_REF: ${{ inputs.source-ref }}
+      RELEASE_TAG: ${{ inputs.release-tag }}
+      BINARY_SHA: ${{ needs.prepare.outputs.binary-sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-binaries-${{ inputs.recipe }}
+          path: docker/${{ inputs.recipe }}/binaries
+      - run: chmod +x "docker/$RECIPE/binaries/"*/autoscan
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Reject superseded source and release
+        run: |
+          python3 scripts/image.py --recipe "$RECIPE" check-promotion \
+            --source-ref "$SOURCE_REF" --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" --binary-sha "$BINARY_SHA"
+      - name: Publish immutable candidate
+        id: image
+        uses: docker/build-push-action@v7
+        with:
+          context: docker/${{ inputs.recipe }}
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          sbom: true
+          tags: saltydk/autoscan:sha-${{ inputs.source-sha }}-${{ inputs.recipe }}-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: |
+            org.opencontainers.image.revision=${{ inputs.source-sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            io.autoscan.binary.revision=${{ needs.prepare.outputs.binary-sha }}
+          cache-from: |
+            type=gha,scope=autoscan-${{ inputs.recipe }}-amd64
+            type=gha,scope=autoscan-${{ inputs.recipe }}-arm64
+            type=gha,scope=autoscan-${{ inputs.recipe }}-armv7
+      - name: Verify and promote accepted manifest
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAGS: ${{ needs.prepare.outputs.tags }}
+        run: |
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          reference="saltydk/autoscan@${IMAGE_DIGEST}"
+          python3 scripts/image.py --recipe "$RECIPE" verify-publication "$reference" "$SOURCE_SHA" \
+            --binary-sha "$BINARY_SHA" --version "$VERSION"
+          python3 scripts/image.py --recipe "$RECIPE" check-promotion \
+            --source-ref "$SOURCE_REF" --source-sha "$SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" --binary-sha "$BINARY_SHA"
+          mapfile -t tags < <(jq -r '.[]' <<< "$TAGS")
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools create --tag "saltydk/autoscan:${tag}" "$reference"
+            actual=$(docker buildx imagetools inspect "saltydk/autoscan:${tag}" --format '{{json .Manifest}}' | jq -r .digest)
+            [[ "$actual" == "$IMAGE_DIGEST" ]]
+            printf '%s@%s\n' "saltydk/autoscan:${tag}" "$IMAGE_DIGEST" >> published.txt
+          done
+      - name: Retain publication records
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: published-images-${{ inputs.recipe }}
+          path: published.txt
+          if-no-files-found: warn
+
+  acceptance:
+    if: always()
+    needs: [prepare, test-image, publish-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize image acceptance
+        env:
+          PREPARE: ${{ needs.prepare.result }}
+          TESTS: ${{ needs.test-image.result }}
+          PUBLISH: ${{ needs.publish-image.result }}
+          TAGS: ${{ needs.prepare.outputs.tags }}
+        run: |
+          printf '| Stage | Result |\n| --- | --- |\n| Inputs | %s |\n| Image acceptance | %s |\n| Publication | %s |\n' \
+            "$PREPARE" "$TESTS" "$PUBLISH" >> "$GITHUB_STEP_SUMMARY"
+          [[ "$PREPARE" == success && "$TESTS" == success ]]
+          [[ "$TAGS" == '[]' || "$PUBLISH" == success ]]

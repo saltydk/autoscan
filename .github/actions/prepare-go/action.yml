@@ -1,0 +1,25 @@
+name: Prepare and verify Go
+description: Install the binary build tools and run the shared Go checks
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+    - uses: goreleaser/goreleaser-action@v7
+      with:
+        install-only: true
+        version: v2.18.1
+    - uses: arduino/setup-task@v3
+      with:
+        version: 3.53.1
+    - name: Verify Go
+      shell: bash
+      run: |
+        go mod tidy -diff
+        task vendor
+        task test
+        go vet ./...
+        go mod verify
+        go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

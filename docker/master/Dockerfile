@@ -14,10 +14,10 @@ ENV \
   AUTOSCAN_VERBOSITY="0"
 
 # Binary
-COPY ["dist/docker/${TARGETOS}_${TARGETARCH}${TARGETVARIANT:+_7}/autoscan", "/app/autoscan/autoscan"]
+COPY ["binaries/${TARGETOS}_${TARGETARCH}${TARGETVARIANT:+_7}/autoscan", "/app/autoscan/autoscan"]
 
 # Add root files
-COPY ["docker/run", "/etc/services.d/autoscan/run"]
+COPY ["run", "/etc/services.d/autoscan/run"]
 
 ARG BASE_IMAGE
 LABEL org.opencontainers.image.base.name="${BASE_IMAGE}"

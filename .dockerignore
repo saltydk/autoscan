@@ -1,6 +1,0 @@
-**
-!docker/
-!docker/**
-!dist/
-!dist/docker/
-!dist/docker/**

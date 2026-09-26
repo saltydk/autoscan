@@ -18,8 +18,10 @@ jobs:
     permissions:
       contents: write
     outputs:
-      source-sha: ${{ steps.source.outputs.sha }}
-      rebuild: ${{ steps.source.outputs.rebuild }}
+      source-sha: ${{ steps.source.outputs.source-sha }}
+      master-rebuild: ${{ steps.source.outputs.master-rebuild }}
+      release-rebuild: ${{ steps.source.outputs.release-rebuild }}
+      release-tag: ${{ steps.source.outputs.release-tag }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,39 +33,37 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -v
           python3 scripts/image.py base update --write --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
-          python3 scripts/image.py base verify
+          python3 scripts/image.py --recipe master base verify
+          python3 scripts/image.py --recipe release base verify
       - name: Commit resolved pin
         if: steps.update.outputs.changed == 'true'
         run: |
-          git add docker/Dockerfile
+          git add docker/master/Dockerfile docker/release/Dockerfile
           git diff --cached --check
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m 'build(docker): refresh verified base image'
           git push origin HEAD:master
-      - name: Select exact source and detect pending publication
+      - name: Detect pending master and latest publication
         id: source
-        run: |
-          source_sha=$(git rev-parse HEAD)
-          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
-          if docker buildx imagetools inspect saltydk/autoscan:master --format '{{json .Image}}' > published.json; then
-            SOURCE_SHA="$source_sha" python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, os
-          images = json.load(open("published.json"))
-          platforms = ("linux/amd64", "linux/arm64", "linux/arm/v7")
-          current = all(images.get(p, {}).get("config", {}).get("Labels", {}).get("org.opencontainers.image.revision") == os.environ["SOURCE_SHA"] for p in platforms)
-          print(f"rebuild={str(not current).lower()}")
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write("\nPublished master: " + ("current" if current else "pending rebuild") + "\n")
-          PY
-          else
-            echo 'rebuild=true' >> "$GITHUB_OUTPUT"
-            echo 'Published master metadata unavailable; scheduling acceptance and publication.' >> "$GITHUB_STEP_SUMMARY"
-          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/image.py refresh-status --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
 
-  build:
+  master:
     needs: update
-    if: needs.update.outputs.rebuild == 'true'
+    if: needs.update.outputs.master-rebuild == 'true'
     uses: ./.github/workflows/build.yml
     with:
       source-sha: ${{ needs.update.outputs.source-sha }}
+    secrets: inherit
+
+  latest:
+    needs: update
+    if: needs.update.outputs.release-rebuild == 'true'
+    uses: ./.github/workflows/docker.yml
+    with:
+      recipe: release
+      source-sha: ${{ needs.update.outputs.source-sha }}
+      source-ref: refs/heads/master
+      release-tag: ${{ needs.update.outputs.release-tag }}
     secrets: inherit

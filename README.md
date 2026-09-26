@@ -550,7 +550,7 @@ Autoscan's Docker image provides various versions that are available via tags. T
 
 | Tag | Description |
 | :----: | --- |
-| latest | Latest stable version from a tagged GitHub release |
+| latest | Latest released Autoscan binary with independently refreshed base images |
 | master | Most recent GitHub master commit |
 
 #### Usage
@@ -583,20 +583,26 @@ Any other volumes can be referenced within Autoscan's config file `config.yml`, 
 
 ### Building Docker images
 
-The image uses the shared `saltydk/alpine-s6overlay` base pinned by source commit
+The images use the shared `saltydk/alpine-s6overlay` base pinned by source commit
 and multi-platform manifest digest. The base owns the Alpine packages; Autoscan
 adds its compiled binary and s6 service without changing that package inventory.
 The existing `/config` mount, port 3030, `PUID`/`PGID`, and `AUTOSCAN_*`
 environment variables continue to work.
 
-Build the release binaries and stage the Linux artifacts before building an image:
+The runtime recipes live in `docker/master/` and `docker/release/`, including
+their Dockerfiles and startup scripts. Development changes go into the master
+recipe. Both recipes copy a staged binary; binary selection happens in CI.
+
+Build development binaries and stage the Linux artifacts before building an image:
 
 ```bash
 task snapshot
-python3 scripts/image.py base verify
+python3 scripts/image.py --recipe master base verify
 python3 scripts/image.py stage
-docker buildx build --platform linux/amd64 -f docker/Dockerfile --load -t local/autoscan .
-scripts/test-image.sh local/autoscan linux/amd64 x86_64 "$(git rev-parse --short HEAD)"
+mkdir -p docker/master/binaries
+cp -a dist/docker/. docker/master/binaries/
+docker buildx build --platform linux/amd64 --load -t local/autoscan docker/master
+scripts/test-image.sh local/autoscan linux/amd64 x86_64 "$(git rev-parse --short=7 HEAD)"
 ```
 
 The same Dockerfile supports `linux/arm64` and `linux/arm/v7`. Running acceptance
@@ -605,9 +611,11 @@ Staging reads GoReleaser's artifact metadata so compiler-specific directory
 suffixes do not affect the build.
 
 To inspect a base update, run `python3 scripts/image.py base update`. Add `--write`
-to update the Dockerfile after the resolver has verified the source tag, digest,
-and matching revision labels on all three platforms. `base verify` checks the
-committed pin, so historical builds do not require the base to remain `latest`.
+to update the base pin in both Dockerfiles after the resolver has verified the
+source tag, digest, and matching revision labels on all three platforms. Other
+recipe differences are preserved. `--recipe master base verify` and
+`--recipe release base verify` check each committed pin, so historical builds do
+not require the base to remain `latest`.
 The base updater owns this pin; Renovate manages other supported dependencies.
 
 CI builds and boots each platform, checks the authenticated webhook and service
@@ -617,10 +625,34 @@ also blocks CISA KEV findings. Credential-dependent Scout checks run outside pul
 requests. SARIF reports and explicit per-platform outcomes are retained as
 artifacts. Pull requests do not publish images.
 
+`build.yml` builds development binaries and calls `docker.yml` to test the master
+recipe on every branch push and pull request. Master commits publish the `master`
+image; other branches and pull requests only test images.
+
+`release.yml` publishes GoReleaser binaries for version tags, then calls the same
+Docker workflow with the release recipe. Before any binary or image publication,
+the release workflow requires the two runtime recipes to match exactly, including
+base pins, file contents, and permissions. Synchronize the release recipe with
+the tested master recipe before tagging, and check it locally with:
+
+```bash
+python3 scripts/image.py check-release
+```
+
+Only the generated `binaries/` directories are excluded from that comparison.
+Recipe differences remain permitted during development.
+
+Release images download the published application's Linux binaries and verify
+their SHA-512 checksums. An application release publishes its versioned image tag
+and `latest`. Base refreshes retain those same release binaries and publish only
+`latest`, alongside the independently rebuilt development `master` image.
+
 After all candidates pass, CI publishes a unique source/run-tagged candidate with
 an SBOM, verifies its platform identities and attestations, and promotes that
-same manifest to the existing branch or release tags. Tag builds still publish
-GoReleaser binary releases. A moved source ref prevents Docker promotion.
-Daily workflows refresh the verified base pin and scan the published `master`
-and `latest` images. The base updater explicitly builds its committed source and
-retries pending publication even when the pin is unchanged.
+same manifest. Image labels record both the recipe commit and the binary commit.
+A moved source ref or a newer application release prevents stale promotion.
+
+Daily workflows update both verified base pins and scan the published `master`
+and `latest` images. The updater checks each image independently and retries
+pending publication even when the base pins are unchanged. Unrelated development
+commits do not trigger a `latest` refresh.
