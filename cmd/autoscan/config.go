@@ -2,9 +2,27 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"time"
+
+	"go.yaml.in/yaml/v3"
 )
+
+func decodeConfig(reader io.Reader) (config, error) {
+	c := config{
+		MinimumAge: 10 * time.Minute,
+		ScanDelay:  5 * time.Second,
+		ScanStats:  time.Hour,
+		Host:       []string{""},
+		Port:       3030,
+	}
+	decoder := yaml.NewDecoder(reader)
+	decoder.KnownFields(true)
+	err := decoder.Decode(&c)
+	return c, err
+}
 
 func defaultConfigDirectory(app string, filename string) string {
 	// binary path

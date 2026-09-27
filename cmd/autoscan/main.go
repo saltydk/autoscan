@@ -15,7 +15,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"gopkg.in/natefinch/lumberjack.v2"
-	"gopkg.in/yaml.v2"
 
 	"github.com/saltydk/autoscan"
 	"github.com/saltydk/autoscan/migrate"
@@ -170,18 +169,7 @@ func main() {
 	}
 	defer file.Close()
 
-	// set default values
-	c := config{
-		MinimumAge: 10 * time.Minute,
-		ScanDelay:  5 * time.Second,
-		ScanStats:  1 * time.Hour,
-		Host:       []string{""},
-		Port:       3030,
-	}
-
-	decoder := yaml.NewDecoder(file)
-	decoder.SetStrict(true)
-	err = decoder.Decode(&c)
+	c, err := decodeConfig(file)
 	if err != nil {
 		log.Fatal().
 			Err(err).
