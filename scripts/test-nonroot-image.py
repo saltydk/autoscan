@@ -42,6 +42,22 @@ def request(url, method="HEAD", authenticated=True):
         return error.code
 
 
+def wait_for_server(container, url):
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            if request(url) == 200:
+                return
+        except OSError:
+            # Docker can reset or time out connections before Autoscan is ready.
+            pass
+        if docker("inspect", "--format", "{{.State.Running}}", container) != "true":
+            raise AssertionError("Autoscan exited during startup")
+        if time.monotonic() >= deadline:
+            raise AssertionError("Autoscan did not start its authenticated webhook server")
+        time.sleep(0.5)
+
+
 def verify_persisted_scan(container, directory):
     data = subprocess.check_output(["docker", "cp", f"{container}:/config/.", "-"])
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
@@ -83,18 +99,7 @@ def test_image(image, platform, short_sha, numeric_user):
             docker("start", container)
             address = docker("port", container, "3030/tcp").splitlines()[0]
             url = "http://" + address + "/triggers/manual"
-            deadline = time.monotonic() + 60
-            while True:
-                try:
-                    if request(url) == 200:
-                        break
-                except urllib.error.URLError:
-                    pass
-                if docker("inspect", "--format", "{{.State.Running}}", container) != "true":
-                    raise AssertionError("Autoscan exited during startup")
-                if time.monotonic() >= deadline:
-                    raise AssertionError("Autoscan did not start its authenticated webhook server")
-                time.sleep(0.5)
+            wait_for_server(container, url)
 
             version = docker("exec", container, "/app/autoscan/autoscan", "--version")
             assert short_sha + "@" in version, f"wrong binary: {version}"
