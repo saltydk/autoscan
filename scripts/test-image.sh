@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "usage: $0 IMAGE PLATFORM ARCH SOURCE_SHORT_SHA" >&2
+if [[ $# -lt 4 || $# -gt 5 ]]; then
+  echo "usage: $0 IMAGE PLATFORM ARCH SOURCE_SHORT_SHA [standard|nonroot]" >&2
   exit 2
 fi
 
@@ -10,6 +10,11 @@ image=$1
 platform=$2
 expected_arch=$3
 source_sha=$4
+variant=${5:-standard}
+if [[ "$variant" == nonroot ]]; then
+  exec python3 "$(dirname "$0")/test-nonroot-image.py" "$image" "$platform" "$expected_arch" "$source_sha"
+fi
+[[ "$variant" == standard ]] || { echo "Unknown image variant: $variant" >&2; exit 2; }
 container="autoscan-acceptance-${BASHPID}-${RANDOM}"
 config_dir=$(mktemp -d)
 

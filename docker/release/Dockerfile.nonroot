@@ -1,0 +1,30 @@
+ARG BASE_IMAGE="gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3"
+
+FROM ${BASE_IMAGE}
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+ENV \
+  PATH="/app/autoscan:${PATH}" \
+  AUTOSCAN_CONFIG="/config/config.yml" \
+  AUTOSCAN_DATABASE="/config/autoscan.db" \
+  AUTOSCAN_LOG="/config/activity.log" \
+  AUTOSCAN_VERBOSITY="0" \
+  XDG_CONFIG_HOME="/config/.config" \
+  XDG_CACHE_HOME="/config/.cache" \
+  XDG_DATA_HOME="/config/.local/share" \
+  TZ="Etc/UTC"
+
+USER 65532:65532
+WORKDIR /config
+
+COPY ["binaries/${TARGETOS}_${TARGETARCH}${TARGETVARIANT:+_7}/autoscan", "/app/autoscan/autoscan"]
+
+ARG BASE_IMAGE
+LABEL org.opencontainers.image.base.name="${BASE_IMAGE}"
+
+VOLUME ["/config"]
+EXPOSE 3030
+ENTRYPOINT ["/app/autoscan/autoscan"]

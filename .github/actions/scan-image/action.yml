@@ -1,5 +1,5 @@
 name: Scan image
-description: Apply the shared Alpine image vulnerability policies
+description: Apply the shared runtime image vulnerability policies
 inputs:
   image:
     required: true

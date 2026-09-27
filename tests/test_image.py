@@ -12,33 +12,36 @@ PLATFORMS = ("linux/amd64", "linux/arm64", "linux/arm/v7")
 REVISION = "a" * 40
 BASE_DIGEST = "sha256:" + "b" * 64
 BASE_PIN = f"saltydk/alpine-s6overlay:sha-{REVISION}@{BASE_DIGEST}"
+NONROOT_PIN = f"{image.NONROOT_BASE}@{BASE_DIGEST}"
 
 
-def image_metadata(revision=REVISION, digest=BASE_DIGEST, platforms=PLATFORMS):
+def image_metadata(revision=REVISION, digest=BASE_DIGEST, platforms=PLATFORMS, variant="standard"):
     images = {}
     manifests = []
     for index, platform in enumerate(platforms, start=1):
-        os_name, architecture, *variant = platform.split("/")
+        os_name, architecture, *platform_variant = platform.split("/")
         descriptor = {
             "digest": "sha256:" + str(index) * 64,
             "platform": {"os": os_name, "architecture": architecture},
         }
-        if variant:
-            descriptor["platform"]["variant"] = variant[0]
+        if platform_variant:
+            descriptor["platform"]["variant"] = platform_variant[0]
         manifests.append(descriptor)
         images[platform] = {
             "config": {
+                "User": "65532:65532" if variant == "nonroot" else "",
                 "Labels": {
                     "org.opencontainers.image.revision": revision,
-                    "org.opencontainers.image.base.name": BASE_PIN,
+                    "org.opencontainers.image.base.name": NONROOT_PIN if variant == "nonroot" else BASE_PIN,
+                    "io.autoscan.variant": variant,
                 }
             }
         }
     return {"manifest": {"digest": digest, "manifests": manifests}, "image": images}
 
 
-def publication_metadata(source=REVISION, base=BASE_PIN):
-    metadata = image_metadata(revision=source)
+def publication_metadata(source=REVISION, base=BASE_PIN, variant="standard"):
+    metadata = image_metadata(revision=source, variant=variant)
     metadata["manifest"]["digest"] = "sha256:" + "f" * 64
     attestations = []
     for platform, descriptor in zip(PLATFORMS, metadata["manifest"]["manifests"]):
@@ -67,6 +70,7 @@ def write_recipes(root):
         directory = root / "docker" / recipe
         directory.mkdir(parents=True)
         (directory / "Dockerfile").write_text(f'ARG BASE_IMAGE="{BASE_PIN}"\nFROM ${{BASE_IMAGE}}\n')
+        (directory / "Dockerfile.nonroot").write_text(f'ARG BASE_IMAGE="{NONROOT_PIN}"\nFROM ${{BASE_IMAGE}}\n')
         (directory / "run").write_text("exec autoscan\n")
         (directory / "run").chmod(0o755)
     return root / "docker" / "release"
@@ -172,7 +176,7 @@ class BaseImageTests(unittest.TestCase):
             )
             self.assertEqual(
                 summary.read_text(),
-                "## Base image update\n\n"
+                "## Base image update: standard\n\n"
                 f"- Status: unchanged\n- Before (master): `{BASE_PIN}`\n"
                 f"- Before (release): `{BASE_PIN}`\n- After: `{BASE_PIN}`\n",
             )
@@ -268,6 +272,21 @@ class StageTests(unittest.TestCase):
 
 
 class PublicationTests(unittest.TestCase):
+    def test_nonroot_publication_requires_its_base_variant_and_unprivileged_user(self):
+        metadata = publication_metadata(base=NONROOT_PIN, variant="nonroot")
+        reference = "saltydk/autoscan@" + metadata["manifest"]["digest"]
+        image.validate_publication(reference, REVISION, NONROOT_PIN, metadata, publication_sbom(), variant="nonroot")
+        with self.assertRaisesRegex(image.ImageError, "base image pin"):
+            image.validate_publication(reference, REVISION, BASE_PIN, metadata, publication_sbom(), variant="nonroot")
+        config = metadata["image"]["linux/arm64"]["config"]
+        config["User"] = "0"
+        with self.assertRaisesRegex(image.ImageError, "UID/GID"):
+            image.validate_publication(reference, REVISION, NONROOT_PIN, metadata, publication_sbom(), variant="nonroot")
+        config["User"] = "65532:65532"
+        config["Labels"]["io.autoscan.variant"] = "standard"
+        with self.assertRaisesRegex(image.ImageError, "variant"):
+            image.validate_publication(reference, REVISION, NONROOT_PIN, metadata, publication_sbom(), variant="nonroot")
+
     def test_validate_publication_checks_binary_identity_on_every_platform(self):
         metadata = publication_metadata()
         binary_sha = "c" * 40
@@ -357,11 +376,11 @@ class ReleaseRecipeTests(unittest.TestCase):
             image.check_release_recipes(root)
 
     def test_gate_rejects_recipe_runtime_base_file_set_and_mode_drift(self):
-        for change in ("Dockerfile", "run", "base", "extra", "missing", "mode", "symlink"):
+        for change in ("Dockerfile", "Dockerfile.nonroot", "run", "base", "extra", "missing", "mode", "symlink"):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 release = write_recipes(root)
-                if change in ("Dockerfile", "run"):
+                if change in ("Dockerfile", "Dockerfile.nonroot", "run"):
                     path = release / change
                     path.write_text(path.read_text() + "# changed\n")
                 elif change == "base":
@@ -466,6 +485,8 @@ class RefreshTests(unittest.TestCase):
         for recipe, source_ref, tag, expected in cases:
             with self.subTest(recipe=recipe, ref=source_ref):
                 self.assertEqual(image.publication_tags(recipe, source_ref, tag), expected)
+                self.assertEqual(image.publication_tags(recipe, source_ref, tag, variant="nonroot"),
+                                 [value + "-nonroot" for value in expected])
         for recipe, source_ref, tag in (
             ("master", "refs/tags/v1.4.4", ""),
             ("master", "refs/heads/master", "v1.4.4"),
@@ -480,21 +501,30 @@ class RefreshTests(unittest.TestCase):
         binary_sha = "c" * 40
         master = image_metadata()
         latest = image_metadata(revision="d" * 40)
-        for platform in PLATFORMS:
-            labels = latest["image"][platform]["config"]["Labels"]
-            labels["org.opencontainers.image.version"] = "v1.4.4"
-            labels["io.autoscan.binary.revision"] = binary_sha
+        nonroot = image_metadata(revision="d" * 40, variant="nonroot")
+        for metadata in (latest, nonroot):
+            for platform in PLATFORMS:
+                labels = metadata["image"][platform]["config"]["Labels"]
+                labels["org.opencontainers.image.version"] = "v1.4.4"
+                labels["io.autoscan.binary.revision"] = binary_sha
+        published = {"master": master, "master-nonroot": image_metadata(variant="nonroot"),
+                     "latest": latest, "latest-nonroot": nonroot}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             write_recipes(root)
             def inspect(reference):
-                return master if reference.endswith(":master") else latest
+                return published[reference.rsplit(":", 1)[1]]
             with patch.object(image, "_run", return_value=REVISION), patch.object(image, "resolve_release", return_value=("v1.4.4", binary_sha)):
                 status = image.refresh_status(root, inspect)
                 self.assertEqual((status["master-rebuild"], status["release-rebuild"]), ("false", "false"))
                 latest["image"]["linux/arm64"]["config"]["Labels"]["org.opencontainers.image.base.name"] = "old base"
                 status = image.refresh_status(root, inspect)
                 self.assertEqual((status["master-rebuild"], status["release-rebuild"]), ("false", "true"))
+                latest["image"]["linux/arm64"]["config"]["Labels"]["org.opencontainers.image.base.name"] = BASE_PIN
+                nonroot["image"]["linux/arm64"]["config"]["Labels"]["org.opencontainers.image.base.name"] = "old nonroot base"
+                status = image.refresh_status(root, inspect)
+                self.assertEqual((status["release-standard-rebuild"], status["release-nonroot-rebuild"]), ("false", "true"))
+                self.assertEqual(status["release-rebuild"], "true")
                 latest.clear()
                 self.assertEqual(image.refresh_status(root, inspect)["release-rebuild"], "true")
 
@@ -509,6 +539,51 @@ class RefreshTests(unittest.TestCase):
             with patch.object(image, "resolve_release", return_value=("v1.4.5", "e" * 40)):
                 with self.assertRaisesRegex(image.ImageError, "Latest release changed"):
                     image.check_promotion("release", "refs/heads/master", REVISION, "v1.4.4", binary_sha)
+
+
+class NonrootBaseTests(unittest.TestCase):
+    def metadata(self, **kwargs):
+        platforms = ("linux/amd64", "linux/arm64/v8", "linux/arm/v7", "linux/s390x")
+        return image_metadata(platforms=platforms, variant="nonroot", **kwargs)
+
+    def test_accepts_required_platform_subset_and_arm64_alias(self):
+        self.assertEqual(image.parse_base_image(f'ARG BASE_IMAGE="{NONROOT_PIN}"\n', variant="nonroot"), NONROOT_PIN)
+        image.validate_nonroot_base(NONROOT_PIN, self.metadata())
+        for bad in (image.NONROOT_BASE, NONROOT_PIN.replace(":nonroot@", ":debug-nonroot@"), BASE_PIN):
+            with self.subTest(pin=bad), self.assertRaises(image.ImageError):
+                image.parse_base_image(f'ARG BASE_IMAGE="{bad}"\n', variant="nonroot")
+
+    def test_rejects_missing_architecture_wrong_user_and_digest(self):
+        for failure in ("descriptor", "descriptor-digest", "config", "user", "digest", "duplicate"):
+            with self.subTest(failure=failure):
+                metadata = self.metadata()
+                if failure == "descriptor":
+                    metadata["manifest"]["manifests"].pop(2)
+                elif failure == "descriptor-digest":
+                    metadata["manifest"]["manifests"][0]["digest"] = "invalid"
+                elif failure == "config":
+                    metadata["image"].pop("linux/arm/v7")
+                elif failure == "user":
+                    metadata["image"]["linux/arm64/v8"]["config"]["User"] = "root"
+                elif failure == "digest":
+                    metadata["manifest"]["digest"] = "sha256:" + "c" * 64
+                else:
+                    metadata["manifest"]["manifests"].append(metadata["manifest"]["manifests"][0])
+                with self.assertRaises(image.ImageError):
+                    image.validate_nonroot_base(NONROOT_PIN, metadata)
+
+    def test_update_changes_both_nonroot_pins_without_touching_standard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_recipes(root)
+            before = {recipe: (root / "docker" / recipe / "Dockerfile").read_bytes() for recipe in image.RECIPES}
+            digest = "sha256:" + "c" * 64
+            result = image.update_base(root, lambda ref: self.metadata(digest=digest), write=True, variant="nonroot")
+            self.assertTrue(result.changed)
+            self.assertEqual(result.variant, "nonroot")
+            for recipe in image.RECIPES:
+                self.assertEqual(image.base_pin(root, recipe, "nonroot"), f"{image.NONROOT_BASE}@{digest}")
+                self.assertEqual((root / "docker" / recipe / "Dockerfile").read_bytes(), before[recipe])
 
 
 if __name__ == "__main__":

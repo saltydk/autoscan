@@ -28,17 +28,23 @@ jobs:
           ref: master
           fetch-depth: 0
       - uses: docker/setup-buildx-action@v4
-      - name: Resolve and verify base
-        id: update
+      - name: Resolve and verify standard base
+        id: standard
         run: |
           python3 -m unittest discover -s tests -v
           python3 scripts/image.py base update --write --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
           python3 scripts/image.py --recipe master base verify
           python3 scripts/image.py --recipe release base verify
-      - name: Commit resolved pin
-        if: steps.update.outputs.changed == 'true'
+      - name: Resolve and verify nonroot base
+        id: nonroot
         run: |
-          git add docker/master/Dockerfile docker/release/Dockerfile
+          python3 scripts/image.py --variant nonroot base update --write --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+          python3 scripts/image.py --recipe master --variant nonroot base verify
+          python3 scripts/image.py --recipe release --variant nonroot base verify
+      - name: Commit resolved pin
+        if: steps.standard.outputs.changed == 'true' || steps.nonroot.outputs.changed == 'true'
+        run: |
+          git add docker/master/Dockerfile docker/release/Dockerfile docker/master/Dockerfile.nonroot docker/release/Dockerfile.nonroot
           git diff --cached --check
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m 'build(docker): refresh verified base image'
@@ -60,9 +66,14 @@ jobs:
   latest:
     needs: update
     if: needs.update.outputs.release-rebuild == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [standard, nonroot]
     uses: ./.github/workflows/docker.yml
     with:
       recipe: release
+      variant: ${{ matrix.variant }}
       source-sha: ${{ needs.update.outputs.source-sha }}
       source-ref: refs/heads/master
       release-tag: ${{ needs.update.outputs.release-tag }}

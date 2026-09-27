@@ -25,7 +25,7 @@ jobs:
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json, re, subprocess
           entries = []
-          for tag in ("latest", "master"):
+          for tag in ("latest", "master", "latest-nonroot", "master-nonroot"):
               image = "saltydk/autoscan:" + tag
               data = json.loads(subprocess.check_output(["docker", "buildx", "imagetools", "inspect", image, "--format", "{{json .Manifest}}"], text=True))
               digest = data["digest"]

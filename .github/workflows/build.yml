@@ -63,9 +63,14 @@ jobs:
 
   image:
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [standard, nonroot]
     uses: ./.github/workflows/docker.yml
     with:
       recipe: master
+      variant: ${{ matrix.variant }}
       source-sha: ${{ needs.build.outputs.source-sha }}
       source-ref: ${{ github.ref }}
     secrets: inherit

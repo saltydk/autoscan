@@ -552,6 +552,11 @@ Autoscan's Docker image provides various versions that are available via tags. T
 | :----: | --- |
 | latest | Latest released Autoscan binary with independently refreshed base images |
 | master | Most recent GitHub master commit |
+| latest-nonroot | Opt-in distroless image using the latest released Autoscan binary |
+| master-nonroot | Opt-in distroless image using the most recent master binary |
+
+Application releases also publish `<version>` and `<version>-nonroot` tags.
+Base refreshes update the floating tags without changing the released binary.
 
 #### Usage
 
@@ -581,16 +586,62 @@ Autoscan's Docker image supports the following parameters.
 
 Any other volumes can be referenced within Autoscan's config file `config.yml`, assuming it has been specified as a volume.
 
+#### Opt-in nonroot images
+
+The `-nonroot` images are available alongside the existing Alpine/s6 images for
+testing and migration. They use `gcr.io/distroless/static-debian13:nonroot`, with
+the same Autoscan binary, CA certificates, and timezone data. Autoscan runs
+directly as UID/GID `65532:65532` by default. These images have no shell, package
+manager, s6, curl, or archive utilities.
+
+For an existing installation, set Docker's numeric user to the UID/GID currently
+used by Autoscan, and keep the same configuration and media mounts. For example,
+an installation using `PUID=1000` and `PGID=1001` can run:
+
+```bash
+docker run \
+  --name=autoscan \
+  --user 1000:1001 \
+  -e TZ=Etc/UTC \
+  -p 3030:3030 \
+  -v "/opt/autoscan:/config" \
+  -v "/mnt/unionfs:/mnt/unionfs:ro" \
+  --restart=unless-stopped \
+  -d saltydk/autoscan:latest-nonroot
+```
+
+In Compose, the equivalent setting is `user: "1000:1001"`. Stop the existing
+container before starting its replacement; only one instance should use the
+database. The selected user must own or be able to write `/config`, the database,
+and existing log files, and must be able to traverse the media/anchor mounts.
+Keep existing log ownership aligned with that user so log rotation can preserve
+it. The nonroot image does not change bind-mount ownership. Newly initialized
+named volumes use the default `65532:65532` ownership; a custom numeric user
+requires a volume prepared for that user.
+
+`PUID`, `PGID`, and s6 initialization hooks do not apply to this variant. A `UMASK`
+environment variable does not change its process umask. `AUTOSCAN_*` and `TZ`
+remain supported. Use absolute paths; writable XDG directories are configured
+under `/config`. A read-only root filesystem is supported with writable `/config`
+and `/tmp`, for example by adding `--read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m`.
+
+Run health checks externally against `/health` or the authenticated webhook;
+checks that execute curl or a shell inside the container need changing. Autoscan
+receives SIGTERM directly and normally stops with exit code `143`. Container
+restart policy provides restart behavior. To return to the s6 variant, select
+the corresponding image tag without `-nonroot` and restore `PUID`/`PGID` settings.
+
 ### Building Docker images
 
-The images use the shared `saltydk/alpine-s6overlay` base pinned by source commit
+The standard images use the shared `saltydk/alpine-s6overlay` base pinned by source commit
 and multi-platform manifest digest. The base owns the Alpine packages; Autoscan
 adds its compiled binary and s6 service without changing that package inventory.
 The existing `/config` mount, port 3030, `PUID`/`PGID`, and `AUTOSCAN_*`
 environment variables continue to work.
 
 The runtime recipes live in `docker/master/` and `docker/release/`, including
-their Dockerfiles and startup scripts. Development changes go into the master
+their `Dockerfile`, `Dockerfile.nonroot`, and startup scripts. The nonroot base is
+pinned by its published multi-platform manifest digest. Development changes go into the master
 recipe. Both recipes copy a staged binary; binary selection happens in CI.
 
 Build development binaries and stage the Linux artifacts before building an image:
@@ -605,7 +656,11 @@ docker buildx build --platform linux/amd64 --load -t local/autoscan docker/maste
 scripts/test-image.sh local/autoscan linux/amd64 x86_64 "$(git rev-parse --short=7 HEAD)"
 ```
 
-The same Dockerfile supports `linux/arm64` and `linux/arm/v7`. Running acceptance
+Both Dockerfile variants support `linux/arm64` and `linux/arm/v7`. To build the
+nonroot variant, add `-f docker/master/Dockerfile.nonroot` to the build command
+and append `nonroot` to the acceptance command. Its acceptance checks run from
+the host and cover default/custom users, a read-only root, log rotation,
+persisted scans, trust roots, timezone files, and stop behavior. Running acceptance
 checks for another architecture requires QEMU or a matching native runner.
 Staging reads GoReleaser's artifact metadata so compiler-specific directory
 suffixes do not affect the build.
@@ -617,22 +672,28 @@ recipe differences are preserved. `--recipe master base verify` and
 `--recipe release base verify` check each committed pin, so historical builds do
 not require the base to remain `latest`.
 The base updater owns this pin; Renovate manages other supported dependencies.
+Use `python3 scripts/image.py --variant nonroot base update` and
+`python3 scripts/image.py --recipe master --variant nonroot base verify` for the
+distroless pins. Its validation checks the required architecture subset and
+nonroot default user; historical pins remain valid when the upstream tag moves.
 
 CI builds and boots each platform, checks the authenticated webhook and service
-user, verifies the inherited package inventory, and applies the shared Trivy and
+user, verifies the standard image's inherited package inventory, and applies the shared Trivy and
 Docker Scout policies. Trivy blocks fixable HIGH/CRITICAL vulnerabilities; Scout
 also blocks CISA KEV findings. Credential-dependent Scout checks run outside pull
 requests. SARIF reports and explicit per-platform outcomes are retained as
 artifacts. Pull requests do not publish images.
 
 `build.yml` builds development binaries and calls `docker.yml` to test the master
-recipe on every branch push and pull request. Master commits publish the `master`
-image; other branches and pull requests only test images.
+recipe on every branch push and pull request. Standard and nonroot variants have
+independent acceptance and publication jobs, so a failing experimental variant
+does not prevent the standard image from publishing. Master commits publish
+`master` and `master-nonroot`; other branches and pull requests only test images.
 
 `release.yml` publishes GoReleaser binaries for version tags, then calls the same
 Docker workflow with the release recipe. Before any binary or image publication,
 the release workflow requires the two runtime recipes to match exactly, including
-base pins, file contents, and permissions. Synchronize the release recipe with
+base pins for both variants, file contents, and permissions. Synchronize the release recipe with
 the tested master recipe before tagging, and check it locally with:
 
 ```bash
@@ -644,15 +705,16 @@ Recipe differences remain permitted during development.
 
 Release images download the published application's Linux binaries and verify
 their SHA-512 checksums. An application release publishes its versioned image tag
-and `latest`. Base refreshes retain those same release binaries and publish only
-`latest`, alongside the independently rebuilt development `master` image.
+and `latest`, plus their `-nonroot` counterparts. Base refreshes retain those same
+release binaries and publish `latest`/`latest-nonroot`, alongside the independently
+rebuilt development images.
 
 After all candidates pass, CI publishes a unique source/run-tagged candidate with
 an SBOM, verifies its platform identities and attestations, and promotes that
 same manifest. Image labels record both the recipe commit and the binary commit.
 A moved source ref or a newer application release prevents stale promotion.
 
-Daily workflows update both verified base pins and scan the published `master`
-and `latest` images. The updater checks each image independently and retries
+Daily workflows update both base variants in both recipes and scan all four
+published floating tags. The updater checks each image independently and retries
 pending publication even when the base pins are unchanged. Unrelated development
 commits do not trigger a `latest` refresh.

@@ -1,5 +1,6 @@
 **
 !Dockerfile
+!Dockerfile.nonroot
 !run
 !binaries/
 !binaries/**

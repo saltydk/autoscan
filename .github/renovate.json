@@ -3,9 +3,9 @@
   "extends": ["config:recommended", ":semanticCommits", ":ignoreUnstable"],
   "packageRules": [
     {
-      "description": "The base updater owns the verified source tag and manifest digest together",
+      "description": "The base updater owns the verified runtime base image pins",
       "matchDatasources": ["docker"],
-      "matchPackageNames": ["saltydk/alpine-s6overlay"],
+      "matchPackageNames": ["saltydk/alpine-s6overlay", "gcr.io/distroless/static-debian13"],
       "enabled": false
     }
   ]

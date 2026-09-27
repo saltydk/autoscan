@@ -19,13 +19,16 @@ from typing import Callable, Mapping, Sequence
 
 
 BASE_REPOSITORY = "saltydk/alpine-s6overlay"
+NONROOT_BASE = "gcr.io/distroless/static-debian13:nonroot"
 IMAGE_REPOSITORY = "saltydk/autoscan"
 RECIPES = ("master", "release")
+VARIANTS = ("standard", "nonroot")
 PLATFORMS = ("linux/amd64", "linux/arm64", "linux/arm/v7")
 BASE_PATTERN = re.compile(
     rf"^{re.escape(BASE_REPOSITORY)}:sha-(?P<revision>[0-9a-f]{{40}})"
     r"@(?P<digest>sha256:[0-9a-f]{64})$"
 )
+NONROOT_PATTERN = re.compile(rf"^{re.escape(NONROOT_BASE)}@(?P<digest>sha256:[0-9a-f]{{64}})$")
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 REFERENCE_PATTERN = re.compile(r"^.+@(?P<digest>sha256:[0-9a-f]{64})$")
@@ -41,6 +44,7 @@ class BaseUpdate:
     before: Mapping[str, str]
     after: str
     changed: bool
+    variant: str = "standard"
 
 
 Inspector = Callable[[str], Mapping[str, object]]
@@ -59,12 +63,22 @@ def _string(data: Mapping[str, object], key: str, description: str) -> str:
     return value
 
 
-def parse_base_image(dockerfile: str) -> str:
+def base_pattern(variant: str) -> re.Pattern[str]:
+    if variant == "standard":
+        return BASE_PATTERN
+    if variant == "nonroot":
+        return NONROOT_PATTERN
+    raise ImageError(f"unknown image variant: {variant}")
+
+
+def parse_base_image(dockerfile: str, *, variant: str = "standard") -> str:
     matches = BASE_ARG_PATTERN.findall(dockerfile)
     if len(matches) != 1:
         raise ImageError("Dockerfile must contain exactly one quoted BASE_IMAGE argument")
     pin = matches[0]
-    if BASE_PATTERN.fullmatch(pin) is None:
+    if base_pattern(variant).fullmatch(pin) is None:
+        if variant == "nonroot":
+            raise ImageError(f"BASE_IMAGE must pin {NONROOT_BASE} by manifest digest")
         raise ImageError(
             "BASE_IMAGE must contain the alpine-s6overlay source SHA tag and manifest digest"
         )
@@ -162,6 +176,44 @@ def validate_base_reference(
         raise ImageError("base image SHA tag has moved from the pinned manifest digest")
 
 
+def validate_nonroot_base(pin: str, metadata: Mapping[str, object]) -> None:
+    match = NONROOT_PATTERN.fullmatch(pin)
+    if match is None or _manifest_digest(metadata) != match.group("digest"):
+        raise ImageError("nonroot base manifest does not match the pinned digest")
+    manifests = _manifest(metadata).get("manifests")
+    if not isinstance(manifests, list):
+        raise ImageError("nonroot base is missing platform descriptors")
+    # Distroless also publishes other architectures and spells arm64 as arm64/v8.
+    def normalize(platform):
+        return "linux/arm64" if platform == "linux/arm64/v8" else platform
+    platforms = set()
+    for raw in manifests:
+        descriptor = _mapping(raw, "nonroot base descriptor")
+        platform = normalize(_descriptor_platform(descriptor))
+        if platform is None:
+            continue
+        digest = _string(descriptor, "digest", "nonroot base descriptor")
+        if DIGEST_PATTERN.fullmatch(digest) is None:
+            raise ImageError(f"nonroot base contains an invalid digest for {platform}")
+        if platform in platforms:
+            raise ImageError(f"nonroot base contains duplicate platform {platform}")
+        platforms.add(platform)
+    if not set(PLATFORMS).issubset(platforms):
+        raise ImageError("nonroot base does not cover the required platforms")
+    images = _mapping(metadata.get("image"), "nonroot base image metadata")
+    users = {}
+    for platform, raw in images.items():
+        platform = normalize(platform)
+        if platform not in PLATFORMS:
+            continue
+        if platform in users:
+            raise ImageError(f"nonroot base contains duplicate metadata for {platform}")
+        config = _mapping(_mapping(raw, "nonroot platform image").get("config"), "nonroot image config")
+        users[platform] = config.get("User")
+    if set(users) != set(PLATFORMS) or any(user not in ("65532", "65532:65532") for user in users.values()):
+        raise ImageError("nonroot base must use UID 65532 on every required platform")
+
+
 def inspect_image(reference: str) -> Mapping[str, object]:
     return _inspect_format(reference, "{{json .}}", "image metadata")
 
@@ -193,8 +245,14 @@ def recipe_directory(root: Path, recipe: str) -> Path:
     return root / "docker" / recipe
 
 
-def base_pin(root: Path, recipe: str) -> str:
-    return parse_base_image((recipe_directory(root, recipe) / "Dockerfile").read_text(encoding="utf-8"))
+def dockerfile_path(root: Path, recipe: str, variant: str = "standard") -> Path:
+    base_pattern(variant)
+    name = "Dockerfile.nonroot" if variant == "nonroot" else "Dockerfile"
+    return recipe_directory(root, recipe) / name
+
+
+def base_pin(root: Path, recipe: str, variant: str = "standard") -> str:
+    return parse_base_image(dockerfile_path(root, recipe, variant).read_text(encoding="utf-8"), variant=variant)
 
 
 def check_release_recipes(root: Path) -> None:
@@ -219,8 +277,11 @@ def check_release_recipes(root: Path) -> None:
         raise ImageError("release recipe differs from master: " + ", ".join(changed))
 
 
-def verify_base(root: Path, inspector: Inspector = inspect_image, *, recipe: str = "master") -> str:
-    pin = base_pin(root, recipe)
+def verify_base(root: Path, inspector: Inspector = inspect_image, *, recipe: str = "master", variant: str = "standard") -> str:
+    pin = base_pin(root, recipe, variant)
+    if variant == "nonroot":
+        validate_nonroot_base(pin, inspector(pin))
+        return pin
     match = BASE_PATTERN.fullmatch(pin)
     assert match is not None
     sha_tag = f"{BASE_REPOSITORY}:sha-{match.group('revision')}"
@@ -252,19 +313,24 @@ def _replace_base_image(path: Path, before: str, after: str) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
-def update_base(root: Path, inspector: Inspector = inspect_image, *, write: bool = False) -> BaseUpdate:
-    before = {recipe: base_pin(root, recipe) for recipe in RECIPES}
-    latest = inspector(f"{BASE_REPOSITORY}:latest")
-    after = derive_base_image(latest)
-    match = BASE_PATTERN.fullmatch(after)
-    assert match is not None
-    sha_tag = f"{BASE_REPOSITORY}:sha-{match.group('revision')}"
-    validate_base_reference(after, latest, inspector(sha_tag))
-    result = BaseUpdate(before=before, after=after, changed=any(pin != after for pin in before.values()))
+def update_base(root: Path, inspector: Inspector = inspect_image, *, write: bool = False, variant: str = "standard") -> BaseUpdate:
+    before = {recipe: base_pin(root, recipe, variant) for recipe in RECIPES}
+    if variant == "nonroot":
+        latest = inspector(NONROOT_BASE)
+        after = f"{NONROOT_BASE}@{_manifest_digest(latest)}"
+        validate_nonroot_base(after, latest)
+    else:
+        latest = inspector(f"{BASE_REPOSITORY}:latest")
+        after = derive_base_image(latest)
+        match = BASE_PATTERN.fullmatch(after)
+        assert match is not None
+        sha_tag = f"{BASE_REPOSITORY}:sha-{match.group('revision')}"
+        validate_base_reference(after, latest, inspector(sha_tag))
+    result = BaseUpdate(before=before, after=after, changed=any(pin != after for pin in before.values()), variant=variant)
     if write and result.changed:
         for recipe, pin in before.items():
             if pin != after:
-                _replace_base_image(recipe_directory(root, recipe) / "Dockerfile", pin, after)
+                _replace_base_image(dockerfile_path(root, recipe, variant), pin, after)
     return result
 
 
@@ -278,7 +344,7 @@ def _write_update_outputs(result: BaseUpdate, output: Path | None, summary: Path
         summary.parent.mkdir(parents=True, exist_ok=True)
         status = "changed" if result.changed else "unchanged"
         with summary.open("a", encoding="utf-8") as stream:
-            stream.write("## Base image update\n\n")
+            stream.write(f"## Base image update: {result.variant}\n\n")
             stream.write(f"- Status: {status}\n")
             for recipe, pin in result.before.items():
                 stream.write(f"- Before ({recipe}): `{pin}`\n")
@@ -416,22 +482,26 @@ def download_release(root: Path, tag: str) -> None:
         stage_release(root, tag, Path(directory))
 
 
-def publication_tags(recipe: str, source_ref: str, release_tag: str = "") -> list[str]:
+def publication_tags(recipe: str, source_ref: str, release_tag: str = "", *, variant: str = "standard") -> list[str]:
+    base_pattern(variant)
+    tags = None
     if recipe == "master" and not release_tag and source_ref.startswith(("refs/heads/", "refs/pull/")):
-        return ["master"] if source_ref == "refs/heads/master" else []
+        tags = ["master"] if source_ref == "refs/heads/master" else []
     if recipe == "release" and re.fullmatch(r"v[0-9][0-9A-Za-z_.-]{0,126}", release_tag):
         if source_ref == "refs/tags/" + release_tag:
-            return [release_tag[1:], "latest"]
+            tags = [release_tag[1:], "latest"]
         if source_ref == "refs/heads/master":
-            return ["latest"]
-    raise ImageError("image recipe, source ref, and release tag do not describe a supported publication")
+            tags = ["latest"]
+    if tags is None:
+        raise ImageError("image recipe, source ref, and release tag do not describe a supported publication")
+    return [tag + "-nonroot" for tag in tags] if variant == "nonroot" else tags
 
 
-def prepare_image(root: Path, recipe: str, source_ref: str, source_sha: str, release_tag: str = "") -> dict[str, str]:
-    tags = publication_tags(recipe, source_ref, release_tag)
+def prepare_image(root: Path, recipe: str, source_ref: str, source_sha: str, release_tag: str = "", *, variant: str = "standard") -> dict[str, str]:
+    tags = publication_tags(recipe, source_ref, release_tag, variant=variant)
     if REVISION_PATTERN.fullmatch(source_sha) is None:
         raise ImageError("invalid image source revision")
-    verify_base(root, recipe=recipe)
+    verify_base(root, recipe=recipe, variant=variant)
     binary_sha = source_sha
     if recipe == "release":
         release_tag, binary_sha = resolve_release(release_tag)
@@ -457,22 +527,28 @@ def refresh_status(root: Path, inspector: Inspector = inspect_image) -> dict[str
     tag, binary_sha = resolve_release()
     result = {"source-sha": source_sha, "release-tag": tag, "release-sha": binary_sha}
     for recipe, image_tag in (("master", "master"), ("release", "latest")):
-        labels = {"org.opencontainers.image.base.name": base_pin(root, recipe)}
-        if recipe == "master":
-            labels["org.opencontainers.image.revision"] = source_sha
-        else:
-            labels["org.opencontainers.image.version"] = tag
-            labels["io.autoscan.binary.revision"] = binary_sha
-        try:
-            current = publication_current(inspector(f"{IMAGE_REPOSITORY}:{image_tag}"), labels)
-        except ImageError:
-            current = False
-        result[f"{recipe}-rebuild"] = str(not current).lower()
+        pending = False
+        for variant in VARIANTS:
+            labels = {"org.opencontainers.image.base.name": base_pin(root, recipe, variant),
+                      "io.autoscan.variant": variant}
+            if recipe == "master":
+                labels["org.opencontainers.image.revision"] = source_sha
+            else:
+                labels["org.opencontainers.image.version"] = tag
+                labels["io.autoscan.binary.revision"] = binary_sha
+            published_tag = image_tag + ("-nonroot" if variant == "nonroot" else "")
+            try:
+                current = publication_current(inspector(f"{IMAGE_REPOSITORY}:{published_tag}"), labels)
+            except ImageError:
+                current = False
+            result[f"{recipe}-{variant}-rebuild"] = str(not current).lower()
+            pending = pending or not current
+        result[f"{recipe}-rebuild"] = str(pending).lower()
     return result
 
 
-def check_promotion(recipe: str, source_ref: str, source_sha: str, release_tag: str, binary_sha: str) -> None:
-    if not publication_tags(recipe, source_ref, release_tag):
+def check_promotion(recipe: str, source_ref: str, source_sha: str, release_tag: str, binary_sha: str, *, variant: str = "standard") -> None:
+    if not publication_tags(recipe, source_ref, release_tag, variant=variant):
         raise ImageError("this source is only eligible for image testing")
     if remote_revision(source_ref) != source_sha:
         raise ImageError("Source ref moved; refusing publication")
@@ -489,13 +565,14 @@ def validate_publication(
     *,
     binary_sha: str = "",
     version: str = "",
+    variant: str = "standard",
 ) -> str:
     reference_match = REFERENCE_PATTERN.fullmatch(reference)
     if reference_match is None:
         raise ImageError("publication reference must include an exact sha256 digest")
     if REVISION_PATTERN.fullmatch(source_sha) is None:
         raise ImageError("source revision must be a lowercase 40-character Git SHA")
-    if BASE_PATTERN.fullmatch(base_pin) is None:
+    if base_pattern(variant).fullmatch(base_pin) is None:
         raise ImageError("tracked base image pin is malformed")
     if _manifest_digest(metadata) != reference_match.group("digest"):
         raise ImageError("published manifest digest does not match the requested reference")
@@ -507,10 +584,18 @@ def validate_publication(
             raise ImageError(f"{platform} source revision label does not match")
         if platform_labels.get("org.opencontainers.image.base.name") != base_pin:
             raise ImageError(f"{platform} base image label does not match the tracked pin")
+        if platform_labels.get("io.autoscan.variant") != variant:
+            raise ImageError(f"{platform} image variant label does not match")
         if binary_sha and platform_labels.get("io.autoscan.binary.revision") != binary_sha:
             raise ImageError(f"{platform} binary source revision label does not match")
         if version and platform_labels.get("org.opencontainers.image.version") != version:
             raise ImageError(f"{platform} application version label does not match")
+    if variant == "nonroot":
+        images = _mapping(metadata.get("image"), "nonroot publication image metadata")
+        for platform in PLATFORMS:
+            config = _mapping(_mapping(images[platform], "platform image").get("config"), "image config")
+            if config.get("User") != "65532:65532":
+                raise ImageError(f"{platform} nonroot image must use UID/GID 65532:65532")
 
     sbom = _mapping(sbom_metadata, "publication SBOM metadata")
     if set(sbom) != set(PLATFORMS):
@@ -552,17 +637,19 @@ def verify_publication(
     recipe: str = "master",
     binary_sha: str = "",
     version: str = "",
+    variant: str = "standard",
 ) -> str:
-    pin = base_pin(root, recipe)
+    pin = base_pin(root, recipe, variant)
     return validate_publication(
         reference, source_sha, pin, inspector(reference), sbom_inspector(reference),
-        binary_sha=binary_sha, version=version,
+        binary_sha=binary_sha, version=version, variant=variant,
     )
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--recipe", choices=RECIPES, default="master")
+    parser.add_argument("--variant", choices=VARIANTS, default="standard")
     commands = parser.add_subparsers(dest="command", required=True)
     base = commands.add_parser("base")
     base_commands = base.add_subparsers(dest="base_command", required=True)
@@ -597,9 +684,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     root = Path.cwd()
     try:
         if args.command == "base" and args.base_command == "verify":
-            print(verify_base(root, recipe=args.recipe))
+            print(verify_base(root, recipe=args.recipe, variant=args.variant))
         elif args.command == "base":
-            result = update_base(root, write=args.write)
+            result = update_base(root, write=args.write, variant=args.variant)
             _write_update_outputs(result, args.github_output, args.summary)
             print(format_base_update(result))
         elif args.command == "stage":
@@ -609,7 +696,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Release and master runtime recipes match")
         elif args.command in ("prepare", "refresh-status"):
             if args.command == "prepare":
-                result = prepare_image(root, args.recipe, args.source_ref, args.source_sha, args.release_tag)
+                result = prepare_image(root, args.recipe, args.source_ref, args.source_sha, args.release_tag, variant=args.variant)
             else:
                 result = refresh_status(root)
                 if args.summary:
@@ -625,10 +712,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         stream.write(f"{key}={value}\n")
             print(json.dumps(result, indent=2))
         elif args.command == "check-promotion":
-            check_promotion(args.recipe, args.source_ref, args.source_sha, args.release_tag, args.binary_sha)
+            check_promotion(args.recipe, args.source_ref, args.source_sha, args.release_tag, args.binary_sha, variant=args.variant)
         else:
             print(verify_publication(root, args.image_reference, args.source_sha, recipe=args.recipe,
-                                     binary_sha=args.binary_sha, version=args.version))
+                                     binary_sha=args.binary_sha, version=args.version, variant=args.variant))
     except (ImageError, OSError, ValueError) as error:
         print(f"image: {error}", file=sys.stderr)
         return 1

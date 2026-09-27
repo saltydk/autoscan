@@ -43,9 +43,14 @@ jobs:
 
   image:
     needs: binary
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [standard, nonroot]
     uses: ./.github/workflows/docker.yml
     with:
       recipe: release
+      variant: ${{ matrix.variant }}
       source-sha: ${{ needs.binary.outputs.source-sha }}
       source-ref: ${{ github.ref }}
       release-tag: ${{ github.ref_name }}
