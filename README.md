@@ -714,7 +714,23 @@ an SBOM, verifies its platform identities and attestations, and promotes that
 same manifest. Image labels record both the recipe commit and the binary commit.
 A moved source ref or a newer application release prevents stale promotion.
 
-Daily workflows update both base variants in both recipes and scan all four
-published floating tags. The updater checks each image independently and retries
+The base updater checks both base variants in both recipes every six hours.
+The daily security workflow scans all four published floating tags. The updater
+checks each image independently and retries
 pending publication even when the base pins are unchanged. Unrelated development
 commits do not trigger a `latest` refresh.
+
+To request a refresh of the shared Alpine base itself, run **Update base image**
+manually with `refresh-base` enabled. This sends a request to
+`saltydk/docker-alpine-s6overlay`'s `request-refresh.yml`, the same coordinator
+used by qBittorrent. The coordinator reuses a queued or running package refresh
+or starts one. This Autoscan run defers its own updates; the next scheduled or
+manual update adopts the published base and rebuilds when needed.
+
+Requesting a refresh uses the existing `GH_TOKEN` repository secret, which needs
+Actions write access to the base repository. A rejected request fails this run;
+coordinator and base-build failures remain visible in the base repository.
+Autoscan installs no additional Alpine packages, so it has no inherited-package
+solver conflict to turn into an automatic request. Normal base verification
+errors remain failures. The request concerns the Alpine base only, not the
+separate distroless nonroot image.
