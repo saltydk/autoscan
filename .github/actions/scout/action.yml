@@ -56,7 +56,7 @@ runs:
     - name: Run Docker Scout
       if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
       # This is the only Scout version pin. prepare.py reads this reference.
-      uses: docker/scout-action@v1.24.0
+      uses: docker/scout-action@v1.26.0
       with:
         command: ${{ inputs.command }}
         image: ${{ inputs.image }}
