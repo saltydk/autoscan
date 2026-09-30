@@ -734,3 +734,10 @@ Autoscan installs no additional Alpine packages, so it has no inherited-package
 solver conflict to turn into an automatic request. Normal base verification
 errors remain failures. The request concerns the Alpine base only, not the
 separate distroless nonroot image.
+
+Scout uses `.github/actions/scout` to authenticate the release download with the
+job's GitHub token and verify its checksum before running the upstream action.
+The wrapper contains the sole `docker/scout-action@...` version pin. Renovate
+updates it, and the binary release and checksum filename follow automatically.
+Setup failures stop dependent scanner steps; vulnerability findings still fail
+the existing security gates.

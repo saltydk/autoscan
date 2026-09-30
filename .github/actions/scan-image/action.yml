@@ -33,11 +33,14 @@ runs:
   using: composite
   steps:
     - uses: aquasecurity/setup-trivy@v0.3.1
+      id: trivy-setup
+      if: ${{ !cancelled() }}
       with:
         cache: true
         version: v0.74.0
     - name: Trivy report
-      if: ${{ !cancelled() }}
+      id: trivy-report
+      if: ${{ !cancelled() && steps.trivy-setup.outcome == 'success' }}
       shell: bash
       env:
         IMAGE: ${{ inputs.image }}
@@ -47,7 +50,7 @@ runs:
         --format sarif --output "trivy-${REPORT}.sarif" "$IMAGE"
     - name: Trivy policy
       id: trivy-policy
-      if: ${{ !cancelled() }}
+      if: ${{ !cancelled() && steps.trivy-setup.outcome == 'success' }}
       shell: bash
       env:
         IMAGE: ${{ inputs.image }}
@@ -55,8 +58,9 @@ runs:
         trivy image --quiet --scanners vuln --severity HIGH,CRITICAL
         --ignore-unfixed --exit-code 1 "$IMAGE"
     - name: Scout report
+      id: scout-report
       if: ${{ !cancelled() && inputs.scout-enabled == 'true' }}
-      uses: docker/scout-action@v1.24.0
+      uses: ./.github/actions/scout
       with:
         command: cves
         image: ${{ inputs.image }}
@@ -67,8 +71,8 @@ runs:
         write-comment: false
     - name: Scout fixable vulnerabilities
       id: scout-fixed
-      if: ${{ !cancelled() && inputs.scout-enabled == 'true' }}
-      uses: docker/scout-action@v1.24.0
+      if: ${{ !cancelled() && steps.scout-report.outcome == 'success' }}
+      uses: ./.github/actions/scout
       with:
         command: cves
         image: ${{ inputs.image }}
@@ -82,8 +86,8 @@ runs:
         write-comment: false
     - name: Scout CISA KEV
       id: scout-kev
-      if: ${{ !cancelled() && inputs.scout-enabled == 'true' }}
-      uses: docker/scout-action@v1.24.0
+      if: ${{ !cancelled() && steps.scout-report.outcome == 'success' }}
+      uses: ./.github/actions/scout
       with:
         command: cves
         image: ${{ inputs.image }}

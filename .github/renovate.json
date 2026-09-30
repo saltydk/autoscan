@@ -7,6 +7,12 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["saltydk/alpine-s6overlay", "gcr.io/distroless/static-debian13"],
       "enabled": false
+    },
+    {
+      "description": "Keep one published Scout action tag for both the action and authenticated binary preparation",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["docker/scout-action"],
+      "pinDigests": false
     }
   ]
 }
