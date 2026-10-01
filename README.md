@@ -741,3 +741,12 @@ The wrapper contains the sole `docker/scout-action@...` version pin. Renovate
 updates it, and the binary release and checksum filename follow automatically.
 Setup failures stop dependent scanner steps; vulnerability findings still fail
 the existing security gates.
+
+## Container security reporting
+
+The released shared container security actions report ordinary HIGH/CRITICAL
+CVEs and retain the CISA KEV block. Candidate runtime tests stay required.
+Scheduled and post-publication reporting cover all four published runtime tags
+on amd64, arm64, and arm/v7. Each reporting invocation keeps separate artifacts;
+complete current scans can resolve tracked issues, while missing assessments
+preserve them. Network retries run inside the shared Python tooling.

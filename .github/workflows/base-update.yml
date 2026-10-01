@@ -80,6 +80,10 @@ jobs:
   master:
     needs: update
     if: needs.update.outputs.master-rebuild == 'true'
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
     uses: ./.github/workflows/build.yml
     with:
       source-sha: ${{ needs.update.outputs.source-sha }}
@@ -92,6 +96,10 @@ jobs:
       fail-fast: false
       matrix:
         variant: [standard, nonroot]
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
     uses: ./.github/workflows/docker.yml
     with:
       recipe: release

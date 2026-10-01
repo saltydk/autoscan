@@ -42,6 +42,8 @@ jobs:
           shellcheck -s sh docker/master/run docker/release/run
       - name: Check workflows
         uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: '-ignore "unexpected key .queue. for .concurrency. section"'
       - uses: ./.github/actions/prepare-go
       - name: Build snapshot
         run: task snapshot
@@ -67,6 +69,10 @@ jobs:
       fail-fast: false
       matrix:
         variant: [standard, nonroot]
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
     uses: ./.github/workflows/docker.yml
     with:
       recipe: master

@@ -1,17 +1,30 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":semanticCommits", ":ignoreUnstable"],
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":ignoreUnstable"
+  ],
   "packageRules": [
     {
       "description": "The base updater owns the verified runtime base image pins",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["saltydk/alpine-s6overlay", "gcr.io/distroless/static-debian13"],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "saltydk/alpine-s6overlay",
+        "gcr.io/distroless/static-debian13"
+      ],
       "enabled": false
     },
     {
-      "description": "Keep one published Scout action tag for both the action and authenticated binary preparation",
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": ["docker/scout-action"],
+      "description": "Use published tags for shared container security actions",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "saltyorg/github-actions"
+      ],
       "pinDigests": false
     }
   ]

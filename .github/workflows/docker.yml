@@ -64,11 +64,6 @@ jobs:
           name: docker-binaries-release-${{ inputs.variant }}
           path: dist/docker/
           if-no-files-found: error
-      - name: Prime scanner cache
-        uses: aquasecurity/setup-trivy@v0.3.1
-        with:
-          cache: true
-          version: v0.74.0
 
   test-image:
     needs: prepare
@@ -125,17 +120,29 @@ jobs:
           BINARY_SHORT_SHA: ${{ needs.prepare.outputs.short-sha }}
           VARIANT: ${{ inputs.variant }}
         run: scripts/test-image.sh "$IMAGE" "$PLATFORM" "$ARCH" "$BINARY_SHORT_SHA" "$VARIANT"
-      - name: Scan candidate
-        id: scan
+      - name: Scan candidate with shared container tooling
+        id: security
         if: ${{ !cancelled() }}
-        uses: ./.github/actions/scan-image
+        uses: saltyorg/github-actions/container-scan@v1.3.1
         with:
           image: local/autoscan:${{ matrix.slug }}
+          name: autoscan-${{ inputs.recipe }}-${{ inputs.variant }}
           platform: ${{ matrix.platform }}
-          report-name: candidate-${{ inputs.recipe }}-${{ inputs.variant }}-${{ matrix.slug }}
+          output-directory: security/${{ inputs.recipe }}-${{ inputs.variant }}-${{ matrix.slug }}
           scout-enabled: ${{ github.event_name != 'pull_request' }}
-          docker-username: ${{ secrets.DOCKER_USERNAME }}
-          docker-password: ${{ secrets.DOCKER_PASSWORD }}
+          enforce-kev: ${{ github.event_name != 'pull_request' }}
+          dockerhub-user: ${{ secrets.DOCKER_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Retain candidate security reports
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: autoscan-security-candidate-autoscan-${{ inputs.recipe }}-${{ inputs.variant }}-${{ matrix.slug }}
+          path: security/${{ inputs.recipe }}-${{ inputs.variant }}-${{ matrix.slug }}
+          if-no-files-found: warn
+
       - name: Report candidate outcomes
         if: always()
         env:
@@ -144,15 +151,14 @@ jobs:
           BINARY_SHA: ${{ needs.prepare.outputs.binary-sha }}
           VARIANT: ${{ inputs.variant }}
           RUNTIME: ${{ steps.runtime.outcome }}
-          TRIVY: ${{ steps.scan.outputs.trivy }}
-          SCOUT_FIXED: ${{ steps.scan.outputs.scout-fixed }}
-          SCOUT_KEV: ${{ steps.scan.outputs.scout-kev }}
+          SECURITY_REPORT: ${{ steps.security.outputs.report-status }}
+          KEV: ${{ steps.security.outputs.kev-status }}
         run: |
           python3 - <<'PY'
           import json, os
           from pathlib import Path
           report = {key.lower(): os.environ[key] or "unavailable" for key in
-                    ("PLATFORM", "SOURCE_SHA", "BINARY_SHA", "VARIANT", "RUNTIME", "TRIVY", "SCOUT_FIXED", "SCOUT_KEV")}
+                    ("PLATFORM", "SOURCE_SHA", "BINARY_SHA", "VARIANT", "RUNTIME", "SECURITY_REPORT", "KEV")}
           Path("candidate.json").write_text(json.dumps(report, indent=2) + "\n")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
               summary.write(f"### {report['platform']}\n\n")
@@ -167,6 +173,10 @@ jobs:
           if-no-files-found: error
 
   publish-image:
+    concurrency:
+      group: autoscan-publication
+      queue: max
+      cancel-in-progress: false
     needs: [prepare, test-image]
     if: needs.prepare.outputs.tags != '[]'
     runs-on: ubuntu-latest
@@ -260,3 +270,15 @@ jobs:
             "$PREPARE" "$TESTS" "$PUBLISH" >> "$GITHUB_STEP_SUMMARY"
           [[ "$PREPARE" == success && "$TESTS" == success ]]
           [[ "$TAGS" == '[]' || "$PUBLISH" == success ]]
+
+  published-security:
+    needs: [prepare, publish-image]
+    if: ${{ !cancelled() && needs.publish-image.result == 'success' && needs.prepare.outputs.tags != '[]' }}
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      artifact-prefix: ${{ inputs.recipe }}-${{ inputs.variant }}
+    secrets: inherit

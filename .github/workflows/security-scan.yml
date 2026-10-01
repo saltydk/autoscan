@@ -1,45 +1,42 @@
 name: Published image security
 
 on:
+  workflow_call:
+    inputs:
+      artifact-prefix:
+        description: Unique artifact prefix for this invocation
+        type: string
+        default: published
   workflow_dispatch:
   schedule:
     - cron: '37 5 * * *'
 
 permissions:
   contents: read
+  security-events: write
 
 concurrency:
-  group: autoscan-published-security
+  group: autoscan-publication
+  queue: max
   cancel-in-progress: false
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix: ${{ steps.snapshot.outputs.matrix }}
     steps:
-      - uses: docker/setup-buildx-action@v4
-      - name: Freeze published manifests
-        id: matrix
-        run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, re, subprocess
-          entries = []
-          for tag in ("latest", "master", "latest-nonroot", "master-nonroot"):
-              image = "saltydk/autoscan:" + tag
-              data = json.loads(subprocess.check_output(["docker", "buildx", "imagetools", "inspect", image, "--format", "{{json .Manifest}}"], text=True))
-              digest = data["digest"]
-              if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
-                  raise ValueError("invalid published digest")
-              for platform, slug in (("linux/amd64", "amd64"), ("linux/arm64", "arm64"), ("linux/arm/v7", "armv7")):
-                  entries.append({"tag": tag, "platform": platform, "slug": slug, "image": "saltydk/autoscan@" + digest})
-          print("matrix=" + json.dumps({"include": entries}))
-          PY
-      - name: Prime scanner cache
-        uses: aquasecurity/setup-trivy@v0.3.1
+      - uses: docker/setup-buildx-action@v4.3.0
+      - id: snapshot
+        uses: saltyorg/github-actions/container-snapshot@v1.3.1
         with:
-          cache: true
-          version: v0.74.0
+          targets: '[{"name":"latest","platform":"linux/amd64","image":"saltydk/autoscan:latest"},{"name":"latest","platform":"linux/arm64","image":"saltydk/autoscan:latest"},{"name":"latest","platform":"linux/arm/v7","image":"saltydk/autoscan:latest"},{"name":"master","platform":"linux/amd64","image":"saltydk/autoscan:master"},{"name":"master","platform":"linux/arm64","image":"saltydk/autoscan:master"},{"name":"master","platform":"linux/arm/v7","image":"saltydk/autoscan:master"},{"name":"latest-nonroot","platform":"linux/amd64","image":"saltydk/autoscan:latest-nonroot"},{"name":"latest-nonroot","platform":"linux/arm64","image":"saltydk/autoscan:latest-nonroot"},{"name":"latest-nonroot","platform":"linux/arm/v7","image":"saltydk/autoscan:latest-nonroot"},{"name":"master-nonroot","platform":"linux/amd64","image":"saltydk/autoscan:master-nonroot"},{"name":"master-nonroot","platform":"linux/arm64","image":"saltydk/autoscan:master-nonroot"},{"name":"master-nonroot","platform":"linux/arm/v7","image":"saltydk/autoscan:master-nonroot"}]'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: autoscan-security-${{ inputs.artifact-prefix || 'published' }}-snapshot
+          path: ${{ steps.snapshot.outputs.expected-targets }}
+          if-no-files-found: error
+
   scan:
     needs: prepare
     runs-on: ubuntu-latest
@@ -47,17 +44,56 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
-      - name: Pull exact platform
-        env:
-          IMAGE: ${{ matrix.image }}
-          PLATFORM: ${{ matrix.platform }}
-        run: docker pull --platform "$PLATFORM" "$IMAGE"
-      - uses: ./.github/actions/scan-image
+      - name: Scan published image
+        uses: saltyorg/github-actions/container-scan@v1.3.1
         with:
           image: ${{ matrix.image }}
+          name: ${{ matrix.name }}
           platform: ${{ matrix.platform }}
-          report-name: published-${{ matrix.tag }}-${{ matrix.slug }}
-          scout-enabled: 'true'
-          docker-username: ${{ secrets.DOCKER_USERNAME }}
-          docker-password: ${{ secrets.DOCKER_PASSWORD }}
+          kind: published
+          output-directory: security/${{ matrix.name }}-${{ matrix.slug }}
+          dockerhub-user: ${{ secrets.DOCKER_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Retain complete or incomplete scan evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: autoscan-security-${{ inputs.artifact-prefix || 'published' }}-published-${{ matrix.name }}-${{ matrix.slug }}
+          path: security/${{ matrix.name }}-${{ matrix.slug }}
+          if-no-files-found: warn
+
+  report:
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    needs: [prepare, scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      security-events: write
+    steps:
+      - uses: docker/setup-buildx-action@v4.3.0
+      - uses: actions/download-artifact@v8
+        with:
+          name: autoscan-security-${{ inputs.artifact-prefix || 'published' }}-snapshot
+          path: snapshot
+      - name: Download per-target reports
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: autoscan-security-${{ inputs.artifact-prefix || 'published' }}-published-*
+          path: security-reports
+          merge-multiple: false
+      - name: Report current published vulnerabilities
+        uses: saltyorg/github-actions/container-report@v1.3.1
+        with:
+          reports-directory: security-reports
+          expected-targets: snapshot/expected-targets.json
+          scope: published-images
+          dry-run: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - name: Retain aggregate reporting outcomes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: autoscan-security-${{ inputs.artifact-prefix || 'published' }}-report
+          path: container-security-report.json
+          if-no-files-found: warn
