@@ -123,7 +123,7 @@ jobs:
       - name: Scan candidate with shared container tooling
         id: security
         if: ${{ !cancelled() }}
-        uses: saltyorg/github-actions/container-scan@v1.3.1
+        uses: saltyorg/github-actions/container-scan@v1.3.2
         with:
           image: local/autoscan:${{ matrix.slug }}
           name: autoscan-${{ inputs.recipe }}-${{ inputs.variant }}
