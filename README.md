@@ -720,27 +720,15 @@ checks each image independently and retries
 pending publication even when the base pins are unchanged. Unrelated development
 commits do not trigger a `latest` refresh.
 
-To request a refresh of the shared Alpine base itself, run **Update base image**
-manually with `refresh-base` enabled. This sends a request to
-`saltydk/docker-alpine-s6overlay`'s `request-refresh.yml`, the same coordinator
-used by qBittorrent. The coordinator reuses a queued or running package refresh
-or starts one. This Autoscan run defers its own updates; the next scheduled or
-manual update adopts the published base and rebuilds when needed.
+The shared Alpine base refreshes its packages every six hours. Autoscan adopts
+its verified published digest on a subsequent base-update check. Autoscan installs
+no additional Alpine packages, so it has no inherited-package solver conflict to
+defer. Base verification and publication errors remain failures.
 
-Requesting a refresh uses the existing `GH_TOKEN` repository secret, which needs
-Actions write access to the base repository. A rejected request fails this run;
-coordinator and base-build failures remain visible in the base repository.
-Autoscan installs no additional Alpine packages, so it has no inherited-package
-solver conflict to turn into an automatic request. Normal base verification
-errors remain failures. The request concerns the Alpine base only, not the
-separate distroless nonroot image.
-
-Scout uses `.github/actions/scout` to authenticate the release download with the
-job's GitHub token and verify its checksum before running the upstream action.
-The wrapper contains the sole `docker/scout-action@...` version pin. Renovate
-updates it, and the binary release and checksum filename follow automatically.
-Setup failures stop dependent scanner steps; vulnerability findings still fail
-the existing security gates.
+To accelerate an Alpine base update manually, run the base repository's `ci`
+workflow with `refresh-packages` enabled, wait for successful publication, then
+run Autoscan's **Update base image** workflow. The nonroot recipe continues to
+refresh its separate distroless base independently.
 
 ## Container security reporting
 
