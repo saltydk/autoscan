@@ -14,12 +14,32 @@ runs:
     - uses: arduino/setup-task@v3
       with:
         version: 3.53.1
-    - name: Verify Go
+    - name: Check Go module files
       shell: bash
-      run: |
-        go mod tidy -diff
-        task vendor
-        task test
-        go vet ./...
-        go mod verify
-        go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      run: go mod tidy -diff
+    - name: Vendor Go dependencies
+      shell: bash
+      run: task vendor
+    - name: Run Go tests
+      shell: bash
+      run: task test
+    - name: Vet Go code
+      shell: bash
+      run: go vet ./...
+    - name: Verify Go module checksums
+      shell: bash
+      run: go mod verify
+    - name: Check Go vulnerabilities
+      id: govulncheck
+      shell: bash
+      run: >-
+        python3 scripts/go_vulnerabilities.py
+        --tool golang.org/x/vuln/cmd/govulncheck@v1.8.0
+        --output-directory "$RUNNER_TEMP/go-vulnerabilities"
+    - name: Retain Go vulnerability report
+      if: ${{ always() && steps.govulncheck.outcome != 'skipped' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: go-vulnerabilities-${{ github.job }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/go-vulnerabilities/
+        if-no-files-found: warn
