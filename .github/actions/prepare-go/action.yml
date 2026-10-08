@@ -13,7 +13,7 @@ runs:
         version: v2.18.2
     - uses: arduino/setup-task@v3
       with:
-        version: 3.53.1
+        version: 3.54.0
     - name: Check Go module files
       shell: bash
       run: go mod tidy -diff
