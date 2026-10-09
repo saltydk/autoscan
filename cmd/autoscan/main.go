@@ -5,10 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -84,10 +82,11 @@ var (
 		globals
 
 		// flags
-		Config    string `type:"path" default:"${config_file}" env:"AUTOSCAN_CONFIG" help:"Config file path"`
-		Database  string `type:"path" default:"${database_file}" env:"AUTOSCAN_DATABASE" help:"Database file path"`
-		Log       string `type:"path" default:"${log_file}" env:"AUTOSCAN_LOG" help:"Log file path"`
-		Verbosity int    `type:"counter" default:"0" short:"v" env:"AUTOSCAN_VERBOSITY" help:"Log level verbosity"`
+		Config      string        `type:"path" default:"${config_file}" env:"AUTOSCAN_CONFIG" help:"Config file path"`
+		Database    string        `type:"path" default:"${database_file}" env:"AUTOSCAN_DATABASE" help:"Database file path"`
+		Log         string        `type:"path" default:"${log_file}" env:"AUTOSCAN_LOG" help:"Log file path"`
+		Verbosity   int           `type:"counter" default:"0" short:"v" env:"AUTOSCAN_VERBOSITY" help:"Log level verbosity"`
+		HTTPTimeout time.Duration `default:"30s" env:"AUTOSCAN_HTTP_TIMEOUT" help:"Incoming HTTP read/write timeout; 0 disables"`
 	}
 )
 
@@ -243,21 +242,8 @@ func main() {
 	// http triggers
 	router := getRouter(c, proc)
 
-	for _, h := range c.Host {
-		go func(host string) {
-			addr := host
-			if !strings.Contains(addr, ":") {
-				addr = fmt.Sprintf("%s:%d", host, c.Port)
-			}
-
-			log.Info().Msgf("Starting server on %s", addr)
-			if err := http.ListenAndServe(addr, router); err != nil {
-				log.Fatal().
-					Str("addr", addr).
-					Err(err).
-					Msg("Failed starting web server")
-			}
-		}(h)
+	if _, err := startHTTPServers(context.Background(), c, router, cli.HTTPTimeout); err != nil {
+		log.Fatal().Err(err).Msg("Failed starting web server")
 	}
 
 	log.Info().

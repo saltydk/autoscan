@@ -401,6 +401,13 @@ read from the persistent database.
 
 ### HTTP and logging options
 
+Incoming HTTP requests have a 5-second header deadline and 30-second read/write
+deadlines. Use `--http-timeout 60s` or `AUTOSCAN_HTTP_TIMEOUT=60s` to change the
+read/write deadlines. The header deadline is the smaller of this value and 5
+seconds. Setting the value to `0` disables these request deadlines. Idle keep-alive
+connections close after 2 minutes. These limits can affect unusually slow webhook
+clients or large batches, which previously had no deadline.
+
 Bernard logs a warning if a Drive sync is still running after 30 minutes. It
 continues waiting for that sync and preserves the existing prevention of
 overlapping syncs. The warning does not cancel or recover the job.
@@ -670,6 +677,7 @@ Autoscan's Docker image supports the following parameters.
 | `-e PUID=1000` | The UserID to run the Autoscan binary as |
 | `-e PGID=1000` | The GroupID to run the Autoscan binary as |
 | `-e AUTOSCAN_VERBOSITY=0` | The Autoscan logging verbosity level to use. (0 = info, 1 = debug, 2 = trace) |
+| `-e AUTOSCAN_HTTP_TIMEOUT=30s` | Incoming HTTP read/write deadline. Set to `0` to disable request deadlines. |
 | `-v /config` | Autoscan's config and database file |
 
 Any other volumes can be referenced within Autoscan's config file `config.yml`, assuming it has been specified as a volume.
