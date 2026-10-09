@@ -82,7 +82,18 @@ func (h handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	scans := make([]autoscan.Scan, 0)
 
 	for _, f := range event.Files {
-		folderPath := path.Dir(h.rewrite(f.Path))
+		if !autoscan.ValidScanPath(f.Path) {
+			l.Error().Str("path", f.Path).Msg("Invalid track file path")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		filePath := h.rewrite(f.Path)
+		if !autoscan.ValidScanPath(filePath) {
+			l.Error().Str("path", filePath).Msg("Invalid rewritten track file path")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		folderPath := path.Dir(filePath)
 		if _, ok := unique[folderPath]; ok {
 			continue
 		}
