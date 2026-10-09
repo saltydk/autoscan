@@ -111,6 +111,16 @@ This should be all that's needed to get you going. Good luck!
 Triggers are the 'input' of Autoscan.
 They translate incoming data into a common data format called the Scan.
 
+Trigger paths and rewritten scan paths must be absolute and contain no NUL bytes.
+Paths do not need to exist on Autoscan's local filesystem. Supported webhook
+events with missing or invalid paths return HTTP 400 before submitting any scans
+from that batch. Empty events create no queued work. Sonarr and Radarr acknowledge
+unsupported event types with HTTP 200; Lidarr and Readarr retain their HTTP 400
+response for unsupported types. Test events still return HTTP 200.
+
+Existing configurations that produce valid absolute paths keep the same rewrite
+and batching behavior. Relative paths and empty rewrite results are rejected.
+
 Autoscan currently supports the following triggers:
 
 - [A-Train](https://github.com/m-rots/a-train/pkgs/container/a-train): The official Google Drive trigger for Autoscan. \
