@@ -29,11 +29,13 @@ type Config struct {
 }
 
 type daemon struct {
-	callback autoscan.ProcessorFunc
-	paths    []path
-	watcher  *fsnotify.Watcher
-	queue    *queue
-	log      zerolog.Logger
+	callback           autoscan.ProcessorFunc
+	paths              []path
+	watcher            *fsnotify.Watcher
+	queue              *queue
+	log                zerolog.Logger
+	directories        map[string]struct{}
+	retiredDirectories map[string]time.Time
 }
 
 type path struct {
@@ -123,6 +125,7 @@ func (d *daemon) walkFunc(path string, fi os.FileInfo, err error) error {
 	if err := d.watcher.Add(path); err != nil {
 		return fmt.Errorf("watch directory: %v: %w", path, err)
 	}
+	d.rememberDirectory(path)
 
 	d.log.Trace().
 		Str("path", path).
@@ -158,63 +161,12 @@ func (d *daemon) worker() {
 				Interface("event", event).
 				Msg("Filesystem event")
 
-			switch {
-			case event.Op&fsnotify.Create == fsnotify.Create:
-				// create
-				fi, err := os.Stat(event.Name)
-				if err != nil {
-					d.log.Error().
-						Err(err).
-						Str("path", event.Name).
-						Msg("Failed retrieving filesystem info")
-					continue
-				}
-
-				// watch new directories
-				if fi.IsDir() {
-					if err := filepath.Walk(event.Name, d.walkFunc); err != nil {
-						d.log.Error().
-							Err(err).
-							Str("path", event.Name).
-							Msg("Failed watching new directory")
-					}
-
-					continue
-				}
-
-			case event.Op&fsnotify.Rename == fsnotify.Rename, event.Op&fsnotify.Remove == fsnotify.Remove:
-				// renamed / removed
-			default:
-				// ignore this event
-				continue
-			}
-
-			// get path object
-			p, err := d.getPathObject(event.Name)
-			if err != nil {
+			if err := d.handleEvent(event); err != nil {
 				d.log.Error().
 					Err(err).
 					Str("path", event.Name).
-					Msg("Failed determining path object")
-				continue
+					Msg("Failed processing filesystem event")
 			}
-
-			// rewrite
-			rewritten := p.Rewriter(event.Name)
-
-			// filter
-			if !p.Allowed(rewritten) {
-				continue
-			}
-
-			// get directory where path has an extension
-			if filepath.Ext(rewritten) != "" {
-				// there was most likely a file extension, use the directory
-				rewritten = filepath.Dir(rewritten)
-			}
-
-			// move to queue
-			d.queue.inputs <- rewritten
 
 		case err, open := <-d.watcher.Errors:
 			if !open {
