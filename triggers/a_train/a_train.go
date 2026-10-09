@@ -88,20 +88,46 @@ func (h handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	rlog.Trace().Interface("event", event).Msg("Received JSON body")
+	if len(event.Created) == 0 && len(event.Deleted) == 0 {
+		rw.WriteHeader(http.StatusOK)
+		return
+	}
 
 	scans := make([]autoscan.Scan, 0)
 
 	for _, path := range event.Created {
+		if !autoscan.ValidScanPath(path) {
+			rlog.Error().Msg("A-Train paths must be absolute and contain no NUL bytes")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		folderPath := h.rewrite(drive, path)
+		if !autoscan.ValidScanPath(folderPath) {
+			rlog.Error().Msg("A-Train rewrite must produce an absolute path without NUL bytes")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		scans = append(scans, autoscan.Scan{
-			Folder:   h.rewrite(drive, path),
+			Folder:   folderPath,
 			Priority: h.priority,
 			Time:     now(),
 		})
 	}
 
 	for _, path := range event.Deleted {
+		if !autoscan.ValidScanPath(path) {
+			rlog.Error().Msg("A-Train paths must be absolute and contain no NUL bytes")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		folderPath := h.rewrite(drive, path)
+		if !autoscan.ValidScanPath(folderPath) {
+			rlog.Error().Msg("A-Train rewrite must produce an absolute path without NUL bytes")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		scans = append(scans, autoscan.Scan{
-			Folder:   h.rewrite(drive, path),
+			Folder:   folderPath,
 			Priority: h.priority,
 			Time:     now(),
 		})
