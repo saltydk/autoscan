@@ -341,8 +341,14 @@ func (d daemon) getScanTask(drive *drive, paths *Paths) *scanTask {
 	}
 
 	for _, p := range paths.NewFolders {
+		if !autoscan.ValidScanPath(p) {
+			continue
+		}
 		// rewrite path
 		rewritten := drive.Rewriter(p)
+		if !autoscan.ValidScanPath(rewritten) {
+			continue
+		}
 
 		// check if path already seen
 		if _, ok := pathMap[rewritten]; ok {
@@ -368,8 +374,14 @@ func (d daemon) getScanTask(drive *drive, paths *Paths) *scanTask {
 	}
 
 	for _, p := range paths.OldFolders {
+		if !autoscan.ValidScanPath(p) {
+			continue
+		}
 		// rewrite path
 		rewritten := drive.Rewriter(p)
+		if !autoscan.ValidScanPath(rewritten) {
+			continue
+		}
 
 		// check if path already seen
 		if _, ok := pathMap[rewritten]; ok {
