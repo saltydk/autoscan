@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -28,6 +29,11 @@ func scanStats(proc *processor.Processor, interval time.Duration) {
 					Int64("skipped", metrics.Skipped).
 					Int64("rejected", metrics.Rejected).
 					Msg("Scan stats")
+				status := fmt.Sprintf("STATUS=Received %d events; processed %d deliveries, %d retryable target failures, skipped %d, rejected %d; %d queued",
+					metrics.Received, metrics.Processed, metrics.Retried, metrics.Skipped, metrics.Rejected, sm)
+				if err := notifyService(status); err != nil {
+					log.Debug().Err(err).Msg("Failed notifying service status")
+				}
 			case errors.Is(err, autoscan.ErrFatal):
 				log.Error().
 					Err(err).

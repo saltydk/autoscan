@@ -272,6 +272,10 @@ func main() {
 	log.Info().
 		Str("version", fmt.Sprintf("%s (%s@%s)", Version, GitCommit, Timestamp)).
 		Msg("Initialised")
+	startupReady.Store(true)
+	if err := notifyService("READY=1"); err != nil {
+		log.Warn().Err(err).Msg("Failed notifying service readiness")
+	}
 
 	// processor
 	log.Info().Msg("Processor started")

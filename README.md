@@ -408,6 +408,12 @@ seconds. Setting the value to `0` disables these request deadlines. Idle keep-al
 connections close after 2 minutes. These limits can affect unusually slow webhook
 clients or large batches, which previously had no deadline.
 
+Autoscan binds all configured listeners before reporting startup complete.
+`/health` returns an empty response with status 503 during startup and status 200
+once initialized. An offline media server does not prevent readiness because
+Autoscan can still receive and persist events. When `NOTIFY_SOCKET` is present,
+Autoscan sends systemd readiness and scan-stat status notifications.
+
 Bernard logs a warning if a Drive sync is still running after 30 minutes. It
 continues waiting for that sync and preserves the existing prevention of
 overlapping syncs. The warning does not cancel or recover the job.

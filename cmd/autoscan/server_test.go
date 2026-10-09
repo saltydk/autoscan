@@ -4,6 +4,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -103,5 +105,49 @@ func TestSlowHTTPHeadersAreTimedOut(t *testing.T) {
 	}
 	if _, err := io.ReadAll(conn); err != nil {
 		t.Fatalf("connection did not close on header deadline: %v", err)
+	}
+}
+
+func TestHealthReportsStartupReadinessAndPreservesEmptyBody(t *testing.T) {
+	startupReady.Store(false)
+	t.Cleanup(func() { startupReady.Store(false) })
+	for _, ready := range []bool{false, true} {
+		startupReady.Store(ready)
+		response := httptest.NewRecorder()
+		healthHandler(response, httptest.NewRequest(http.MethodGet, "/health", nil))
+		want := http.StatusServiceUnavailable
+		if ready {
+			want = http.StatusOK
+		}
+		if response.Code != want || response.Body.Len() != 0 {
+			t.Fatalf("health ready=%t: status=%d, body=%q", ready, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestOptionalServiceNotification(t *testing.T) {
+	t.Setenv("NOTIFY_SOCKET", "")
+	if err := notifyService("READY=1"); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(t.TempDir(), "notify.sock")
+	listener, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: socketPath, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	t.Setenv("NOTIFY_SOCKET", socketPath)
+	if err := notifyService("READY=1"); err != nil {
+		t.Fatal(err)
+	}
+	listener.SetReadDeadline(time.Now().Add(time.Second))
+	buffer := make([]byte, 128)
+	n, _, err := listener.ReadFromUnix(buffer)
+	if err != nil || string(buffer[:n]) != "READY=1" {
+		t.Fatalf("service notification = %q, error = %v", buffer[:n], err)
+	}
+	t.Setenv("NOTIFY_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
+	if err := notifyService("READY=1"); err == nil {
+		t.Fatal("missing notification socket accepted")
 	}
 }

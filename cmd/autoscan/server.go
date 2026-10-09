@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
 )
+
+var startupReady atomic.Bool
 
 func listenAddress(host string, port int) string {
 	if _, _, err := net.SplitHostPort(host); err == nil {
@@ -59,4 +63,22 @@ func startHTTPServers(ctx context.Context, c config, handler http.Handler, timeo
 		}()
 	}
 	return servers, nil
+}
+
+// notifyService is optional systemd integration. An unset socket is a no-op.
+func notifyService(state string) error {
+	path := os.Getenv("NOTIFY_SOCKET")
+	if path == "" {
+		return nil
+	}
+	conn, err := net.DialUnix("unixgram", nil, &net.UnixAddr{Net: "unixgram", Name: path})
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+		return err
+	}
+	_, err = conn.Write([]byte(state))
+	return err
 }
