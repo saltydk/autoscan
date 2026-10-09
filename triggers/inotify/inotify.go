@@ -226,7 +226,15 @@ type queue struct {
 	inputs   chan string
 	scans    map[string]time.Time
 	lock     *sync.Mutex
+	shutdown chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
 }
+
+const (
+	queueDebounceDelay = 10 * time.Second
+	queueRetryDelay    = 5 * time.Second
+)
 
 func newQueue(cb autoscan.ProcessorFunc, log zerolog.Logger, priority int) *queue {
 	q := &queue{
@@ -236,6 +244,8 @@ func newQueue(cb autoscan.ProcessorFunc, log zerolog.Logger, priority int) *queu
 		inputs:   make(chan string),
 		scans:    make(map[string]time.Time),
 		lock:     &sync.Mutex{},
+		shutdown: make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 
 	go q.worker()
@@ -249,12 +259,38 @@ func (q *queue) add(path string) {
 	defer q.lock.Unlock()
 
 	// queue scan task
-	q.scans[path] = time.Now().Add(10 * time.Second)
+	q.scans[path] = time.Now().Add(queueDebounceDelay)
 }
 
 func (q *queue) worker() {
+	if q.done != nil {
+		defer close(q.done)
+	}
+	timer := time.NewTimer(0)
+	timer.Stop()
+	defer timer.Stop()
+
 	for {
+		q.lock.Lock()
+		var next time.Time
+		for _, deadline := range q.scans {
+			if next.IsZero() || deadline.Before(next) {
+				next = deadline
+			}
+		}
+		q.lock.Unlock()
+
+		var ready <-chan time.Time
+		if next.IsZero() {
+			timer.Stop()
+		} else {
+			timer.Reset(time.Until(next))
+			ready = timer.C
+		}
+
 		select {
+		case <-q.shutdown:
+			return
 		case path, ok := <-q.inputs:
 			if !ok {
 				// channel closed
@@ -264,23 +300,34 @@ func (q *queue) worker() {
 			// add path to queue
 			q.add(path)
 
-		default:
+		case <-ready:
 			// process queue
 			q.process()
 		}
 	}
 }
 
+func (q *queue) stop() {
+	// Only queues created by newQueue own a worker and a shutdown signal.
+	if q == nil || q.shutdown == nil {
+		return
+	}
+	q.stopOnce.Do(func() { close(q.shutdown) })
+	<-q.done
+}
+
+func withinDirectory(name, root string) bool {
+	name, root = filepath.Clean(name), filepath.Clean(root)
+	if name == root {
+		return true
+	}
+	return strings.HasPrefix(name, strings.TrimRight(root, string(os.PathSeparator))+string(os.PathSeparator))
+}
+
 func (q *queue) process() {
 	// acquire lock
 	q.lock.Lock()
 	defer q.lock.Unlock()
-
-	// sleep if no scans queued
-	if len(q.scans) == 0 {
-		time.Sleep(100 * time.Millisecond)
-		return
-	}
 
 	// move scans to processor
 	for p, t := range q.scans {
@@ -301,21 +348,15 @@ func (q *queue) process() {
 				Err(err).
 				Str("path", p).
 				Msg("Failed moving scan to processor")
-		} else {
-			q.log.Info().
-				Str("path", p).
-				Msg("Scan moved to processor")
+			q.scans[p] = time.Now().Add(queueRetryDelay)
+			continue
 		}
+
+		q.log.Info().
+			Str("path", p).
+			Msg("Scan moved to processor")
 
 		// remove queued scan
 		delete(q.scans, p)
 	}
-}
-
-func withinDirectory(name, root string) bool {
-	name, root = filepath.Clean(name), filepath.Clean(root)
-	if name == root {
-		return true
-	}
-	return strings.HasPrefix(name, strings.TrimRight(root, string(os.PathSeparator))+string(os.PathSeparator))
 }
