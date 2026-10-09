@@ -132,7 +132,7 @@ func (d *daemon) walkFunc(path string, fi os.FileInfo, err error) error {
 
 func (d *daemon) getPathObject(path string) (*path, error) {
 	for _, p := range d.paths {
-		if strings.HasPrefix(path, p.Path) {
+		if withinDirectory(path, p.Path) {
 			return &p, nil
 		}
 	}
@@ -310,4 +310,12 @@ func (q *queue) process() {
 		// remove queued scan
 		delete(q.scans, p)
 	}
+}
+
+func withinDirectory(name, root string) bool {
+	name, root = filepath.Clean(name), filepath.Clean(root)
+	if name == root {
+		return true
+	}
+	return strings.HasPrefix(name, strings.TrimRight(root, string(os.PathSeparator))+string(os.PathSeparator))
 }
