@@ -60,7 +60,7 @@ func (m *Migrator) exec(component string, migration *migration) (err error) {
 		}
 
 		// commit
-		if errCm := tx.Commit(); err != nil {
+		if errCm := tx.Commit(); errCm != nil {
 			err = fmt.Errorf("commit: %w", errCm)
 		}
 	}(tx)
