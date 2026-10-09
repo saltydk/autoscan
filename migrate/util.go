@@ -39,6 +39,10 @@ func (m *Migrator) versions(component string) (map[int]bool, error) {
 		versions[version] = true
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+
 	return versions, nil
 }
 
