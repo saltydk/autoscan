@@ -57,6 +57,11 @@ Triggers can receive paths from any source: A remote server, a Docker container 
 
 Targets work the other way around. They have to convert the path local to Autoscan to a path understood by the target, which can be a Docker container, remote server, etc. The `from` should be a regexp pattern describing the path from Autoscan's perspective. The `to` should then convert this path into a path which is local to the target.
 
+For directory-prefix rewrites, include the separator: `from: ^/media/` with
+`to: /mapped/` rewrites children of `/media` while preserving `/media2`.
+All triggers and targets use regular-expression rewrite rules, so `from: ^/media`
+also matches `/media2`.
+
 It is important that all three modules can have access to a file. When a trigger receives a scan, then the file should be available from both the processor and all targets.
 
 #### Simple example
