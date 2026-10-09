@@ -76,6 +76,7 @@ func New(c Config) (autoscan.Trigger, error) {
 
 		// start job(s)
 		if err := d.startMonitoring(); err != nil {
+			d.queue.stop()
 			l.Error().
 				Err(err).
 				Msg("Failed initialising jobs")
@@ -142,12 +143,16 @@ func (d *daemon) getPathObject(path string) (*path, error) {
 
 func (d *daemon) worker() {
 	// close watcher
+	defer d.queue.stop()
 	defer d.watcher.Close()
 
 	// process events
 	for {
 		select {
-		case event := <-d.watcher.Events:
+		case event, open := <-d.watcher.Events:
+			if !open {
+				return
+			}
 			// new filesystem event
 			d.log.Trace().
 				Interface("event", event).
@@ -211,7 +216,10 @@ func (d *daemon) worker() {
 			// move to queue
 			d.queue.inputs <- rewritten
 
-		case err := <-d.watcher.Errors:
+		case err, open := <-d.watcher.Errors:
+			if !open {
+				return
+			}
 			d.log.Error().
 				Err(err).
 				Msg("Failed receiving filesystem events")
