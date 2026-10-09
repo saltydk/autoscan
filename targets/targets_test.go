@@ -222,7 +222,7 @@ func TestMediaTargetsRejectLibraryRoots(t *testing.T) {
 				}
 			}
 			for _, folder := range []string{"/other/Show", "/media/series-old/Show", "/media/series/../outside"} {
-				if err := target.Scan(autoscan.Scan{Folder: folder}); err != nil {
+				if err := target.Scan(autoscan.Scan{Folder: folder}); !errors.Is(err, autoscan.ErrLibraryNotMatched) || errors.Is(err, autoscan.ErrScanRejected) {
 					t.Errorf("out-of-library Scan(%q) = %v, want only ErrLibraryNotMatched", folder, err)
 				}
 			}

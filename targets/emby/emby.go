@@ -1,7 +1,6 @@
 package emby
 
 import (
-	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -67,14 +66,7 @@ func (t *target) Scan(scan autoscan.Scan) error {
 
 	lib, err := t.getScanLibrary(scanFolder)
 	if err != nil {
-		if errors.Is(err, autoscan.ErrScanRejected) || errors.Is(err, autoscan.ErrTargetUnavailable) || errors.Is(err, autoscan.ErrFatal) {
-			return err
-		}
-		t.log.Warn().
-			Err(err).
-			Msg("No target libraries found")
-
-		return nil
+		return err
 	}
 
 	l := t.log.With().
@@ -124,5 +116,5 @@ func (t *target) getScanLibrary(folder string) (*library, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("%v: failed determining library", folder)
+	return nil, fmt.Errorf("%s: %w", folder, autoscan.ErrLibraryNotMatched)
 }

@@ -102,19 +102,29 @@ func (p *Processor) CheckAvailability(targets []autoscan.Target) error {
 	return g.Wait()
 }
 
-func (p *Processor) callTargets(targets []autoscan.Target, scan autoscan.Scan) error {
+func (p *Processor) callTargets(targets []autoscan.Target, scan autoscan.Scan) (bool, error) {
 	g := new(errgroup.Group)
+	var delivered atomic.Bool
 	for _, target := range targets {
 		g.Go(func() error {
 			err := target.Scan(scan)
-			if errors.Is(err, autoscan.ErrScanRejected) {
+			switch {
+			case err == nil:
+				delivered.Store(true)
+			case errors.Is(err, autoscan.ErrScanRejected):
 				log.Warn().Err(err).Str("path", scan.Folder).Msg("Target rejected scan")
+				return nil
+			case errors.Is(err, autoscan.ErrLibraryNotMatched):
+				log.Debug().Err(err).Str("path", scan.Folder).Msg("Target skipped unmatched library")
 				return nil
 			}
 			return err
 		})
 	}
-	return g.Wait()
+	if err := g.Wait(); err != nil {
+		return false, err
+	}
+	return delivered.Load(), nil
 }
 
 func (p *Processor) Process(targets []autoscan.Target) error {
@@ -131,7 +141,7 @@ func (p *Processor) Process(targets []autoscan.Target) error {
 	}
 
 	// Fatal or Target Unavailable -> return original error
-	err = p.callTargets(targets, scan)
+	delivered, err := p.callTargets(targets, scan)
 	if err != nil {
 		return err
 	}
@@ -141,7 +151,9 @@ func (p *Processor) Process(targets []autoscan.Target) error {
 		return err
 	}
 
-	p.processed.Add(1)
+	if delivered {
+		p.processed.Add(1)
+	}
 	return nil
 }
 
@@ -158,7 +170,7 @@ func (p *Processor) ProcessTarget(targetID string, target autoscan.Target) error
 		}
 	}
 	err = target.Scan(scan.Scan)
-	if err != nil && !errors.Is(err, autoscan.ErrScanRejected) {
+	if err != nil && !errors.Is(err, autoscan.ErrScanRejected) && !errors.Is(err, autoscan.ErrLibraryNotMatched) {
 		return err
 	}
 	if ackErr := p.store.AcknowledgeTarget(targetID, scan); ackErr != nil {
@@ -167,6 +179,9 @@ func (p *Processor) ProcessTarget(targetID string, target autoscan.Target) error
 	if errors.Is(err, autoscan.ErrScanRejected) {
 		log.Warn().Err(err).Str("target_queue", targetID).Str("path", scan.Folder).
 			Msg("Target rejected scan, removing this delivery from its queue")
+	} else if errors.Is(err, autoscan.ErrLibraryNotMatched) {
+		log.Debug().Err(err).Str("target_queue", targetID).Str("path", scan.Folder).
+			Msg("Target skipped unmatched library")
 	} else {
 		p.processed.Add(1)
 	}

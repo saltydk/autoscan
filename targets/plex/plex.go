@@ -1,7 +1,6 @@
 package plex
 
 import (
-	"errors"
 	"fmt"
 	"path"
 	"strconv"
@@ -64,14 +63,7 @@ func (t *target) Scan(scan autoscan.Scan) error {
 
 	libs, err := t.getScanLibrary(scanFolder)
 	if err != nil {
-		if errors.Is(err, autoscan.ErrScanRejected) || errors.Is(err, autoscan.ErrTargetUnavailable) || errors.Is(err, autoscan.ErrFatal) {
-			return err
-		}
-		t.log.Warn().
-			Err(err).
-			Msg("No target libraries found")
-
-		return nil
+		return err
 	}
 
 	// send scan request
@@ -136,7 +128,7 @@ func (t *target) getScanLibrary(folder string) ([]library, error) {
 	}
 
 	if len(libraries) == 0 {
-		return nil, fmt.Errorf("%v: failed determining libraries", folder)
+		return nil, fmt.Errorf("%s: %w", folder, autoscan.ErrLibraryNotMatched)
 	}
 
 	return libraries, nil

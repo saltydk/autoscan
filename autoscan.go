@@ -48,6 +48,10 @@ var (
 	// The processor must acknowledge it without retrying or stopping other targets.
 	ErrScanRejected = errors.New("scan rejected")
 
+	// ErrLibraryNotMatched indicates that a target has no library for this folder.
+	// The processor acknowledges this target's delivery as skipped.
+	ErrLibraryNotMatched = errors.New("no matching library")
+
 	// ErrNoScans is not an error. It only indicates whether the CLI
 	// should sleep longer depending on the processor output.
 	ErrNoScans = errors.New("no scans currently available")
