@@ -1,8 +1,10 @@
 package jellyfin
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/rs/zerolog"
 
@@ -10,6 +12,7 @@ import (
 )
 
 type Config struct {
+	Name      string             `yaml:"name"`
 	URL       string             `yaml:"url"`
 	Token     string             `yaml:"token"`
 	Rewrite   []autoscan.Rewrite `yaml:"rewrite"`
@@ -20,6 +23,7 @@ type target struct {
 	url       string
 	token     string
 	libraries []library
+	libraryMu sync.Mutex
 
 	log     zerolog.Logger
 	rewrite autoscan.Rewriter
@@ -36,22 +40,11 @@ func New(c Config) (autoscan.Target, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	api := newAPIClient(c.URL, c.Token, l)
 
-	libraries, err := api.Libraries()
-	if err != nil {
-		return nil, err
-	}
-
-	l.Debug().
-		Interface("libraries", libraries).
-		Msg("Retrieved libraries")
-
 	return &target{
-		url:       c.URL,
-		token:     c.Token,
-		libraries: libraries,
+		url:   c.URL,
+		token: c.Token,
 
 		log:     l,
 		rewrite: rewriter,
@@ -59,16 +52,23 @@ func New(c Config) (autoscan.Target, error) {
 	}, nil
 }
 
-func (t target) Available() error {
-	return t.api.Available()
+func (t *target) Available() error {
+	if err := t.api.Available(); err != nil {
+		return err
+	}
+	_, err := t.loadLibraries()
+	return err
 }
 
-func (t target) Scan(scan autoscan.Scan) error {
+func (t *target) Scan(scan autoscan.Scan) error {
 	// determine library for this scan
 	scanFolder := t.rewrite(scan.Folder)
 
 	lib, err := t.getScanLibrary(scanFolder)
 	if err != nil {
+		if errors.Is(err, autoscan.ErrTargetUnavailable) || errors.Is(err, autoscan.ErrFatal) {
+			return err
+		}
 		t.log.Warn().
 			Err(err).
 			Msg("No target libraries found")
@@ -92,8 +92,26 @@ func (t target) Scan(scan autoscan.Scan) error {
 	return nil
 }
 
-func (t target) getScanLibrary(folder string) (*library, error) {
-	for _, l := range t.libraries {
+func (t *target) loadLibraries() ([]library, error) {
+	t.libraryMu.Lock()
+	defer t.libraryMu.Unlock()
+	if t.libraries == nil {
+		libraries, err := t.api.Libraries()
+		if err != nil {
+			return nil, err
+		}
+		t.libraries = libraries
+		t.log.Debug().Interface("libraries", libraries).Msg("Retrieved libraries")
+	}
+	return t.libraries, nil
+}
+
+func (t *target) getScanLibrary(folder string) (*library, error) {
+	librariesSnapshot, err := t.loadLibraries()
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range librariesSnapshot {
 		if strings.HasPrefix(folder, l.Path) {
 			return &l, nil
 		}
