@@ -2,7 +2,9 @@ package processor
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"os"
 	"sync/atomic"
 	"time"
@@ -75,7 +77,12 @@ func (p *Processor) callTargets(targets []autoscan.Target, scan autoscan.Scan) e
 
 	for _, target := range targets {
 		g.Go(func() error {
-			return target.Scan(scan)
+			err := target.Scan(scan)
+			if errors.Is(err, autoscan.ErrScanRejected) {
+				log.Warn().Err(err).Str("path", scan.Folder).Msg("Target rejected scan")
+				return nil
+			}
+			return err
 		})
 	}
 

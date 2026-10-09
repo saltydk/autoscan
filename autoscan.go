@@ -44,6 +44,10 @@ var (
 	// ErrFatal indicates a severe problem related to development.
 	ErrFatal = errors.New("fatal error")
 
+	// ErrScanRejected indicates that a target deliberately refused a scan.
+	// The processor must acknowledge it without retrying or stopping other targets.
+	ErrScanRejected = errors.New("scan rejected")
+
 	// ErrNoScans is not an error. It only indicates whether the CLI
 	// should sleep longer depending on the processor output.
 	ErrNoScans = errors.New("no scans currently available")

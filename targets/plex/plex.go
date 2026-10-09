@@ -3,6 +3,7 @@ package plex
 import (
 	"errors"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,7 +64,7 @@ func (t *target) Scan(scan autoscan.Scan) error {
 
 	libs, err := t.getScanLibrary(scanFolder)
 	if err != nil {
-		if errors.Is(err, autoscan.ErrTargetUnavailable) || errors.Is(err, autoscan.ErrFatal) {
+		if errors.Is(err, autoscan.ErrScanRejected) || errors.Is(err, autoscan.ErrTargetUnavailable) || errors.Is(err, autoscan.ErrFatal) {
 			return err
 		}
 		t.log.Warn().
@@ -117,14 +118,19 @@ func (t *target) loadLibraries(checkAvailability bool) ([]library, error) {
 }
 
 func (t *target) getScanLibrary(folder string) ([]library, error) {
-	librariesSnapshot, err := t.loadLibraries(false)
+	available, err := t.loadLibraries(false)
 	if err != nil {
 		return nil, err
 	}
 	libraries := make([]library, 0)
+	cleanFolder := path.Clean(folder)
 
-	for _, l := range librariesSnapshot {
-		if strings.HasPrefix(folder, l.Path) {
+	for _, l := range available {
+		libraryRoot := path.Clean(l.Path)
+		if l.Path != "" && cleanFolder == libraryRoot {
+			return nil, fmt.Errorf("%s is the root of library %q; scan a movie, show, or season folder instead: %w", folder, l.Name, autoscan.ErrScanRejected)
+		}
+		if strings.HasPrefix(cleanFolder, strings.TrimRight(libraryRoot, "/")+"/") {
 			libraries = append(libraries, l)
 		}
 	}

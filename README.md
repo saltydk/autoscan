@@ -367,6 +367,9 @@ Autoscan currently supports the following targets:
 - Jellyfin
 - Autoscan
 
+Plex, Emby, and Jellyfin reject scans of an entire library root, including a root
+with a trailing slash. Submit a movie, show, or season folder instead. Rejection
+logs name the library and requested path; they affect only that target's delivery.
 ### Plex
 
 Autoscan replaces Plex's default behaviour of updating the Plex library automatically.

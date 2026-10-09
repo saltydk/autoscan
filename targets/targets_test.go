@@ -1,10 +1,12 @@
 package targets_test
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -161,6 +163,120 @@ func TestTargetsStartOfflineAndRetryAvailability(t *testing.T) {
 			status.Store(http.StatusOK)
 			if err := target.Available(); err != nil {
 				t.Fatalf("Available() after recovery: %v", err)
+			}
+		})
+	}
+}
+
+func TestMediaTargetsRejectLibraryRoots(t *testing.T) {
+	for _, targetType := range mediaTargets {
+		t.Run(targetType.name, func(t *testing.T) {
+			var requests atomic.Int32
+			var libraryRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/" {
+					_, _ = io.WriteString(w, `{"MediaContainer":{"version":"1.40.0"}}`)
+					return
+				}
+				if r.URL.Path == targetType.libraries {
+					libraryRequests.Add(1)
+					_, _ = io.WriteString(w, targetType.payload)
+					return
+				}
+				requests.Add(1)
+				if r.URL.Path != targetType.scanPath {
+					t.Errorf("scan URL = %q, want %q", r.URL.Path, targetType.scanPath)
+				}
+				const wantFolder = "/media/series/Show/Season 01"
+				if targetType.name == "plex" {
+					if got := r.URL.Query().Get("path"); got != wantFolder {
+						t.Errorf("scan path = %q, want %q", got, wantFolder)
+					}
+				} else {
+					var payload struct {
+						Updates []struct{ Path string }
+					}
+					if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+						t.Errorf("decode scan: %v", err)
+					} else if len(payload.Updates) != 1 || payload.Updates[0].Path != wantFolder {
+						t.Errorf("scan payload = %+v", payload)
+					}
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+			target, err := targetType.new(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := libraryRequests.Load(); got != 0 {
+				t.Fatalf("constructor made %d network calls", got)
+			}
+			for _, folder := range []string{
+				"/media/series", "/media/series/", "/media//series/.",
+				"/media/series/Show/..", "/media/series/Special/",
+			} {
+				err := target.Scan(autoscan.Scan{Folder: folder})
+				if !errors.Is(err, autoscan.ErrScanRejected) || errors.Is(err, autoscan.ErrFatal) {
+					t.Errorf("Scan(%q) = %v, want only ErrScanRejected", folder, err)
+				}
+			}
+			for _, folder := range []string{"/other/Show", "/media/series-old/Show", "/media/series/../outside"} {
+				if err := target.Scan(autoscan.Scan{Folder: folder}); err != nil {
+					t.Errorf("out-of-library Scan(%q) = %v, want only ErrLibraryNotMatched", folder, err)
+				}
+			}
+			if got := requests.Load(); got != 0 {
+				t.Fatalf("rejected or unrelated scans made %d requests", got)
+			}
+			if err := target.Scan(autoscan.Scan{Folder: "/media/series/Show/Season 01"}); err != nil {
+				t.Fatal(err)
+			}
+			if got := requests.Load(); got != 1 {
+				t.Errorf("season folder scan made %d requests, want 1", got)
+			}
+			if got := libraryRequests.Load(); got != 1 {
+				t.Errorf("library discovery requests = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestMediaTargetsConcurrentLibraryDiscovery(t *testing.T) {
+	for _, targetType := range mediaTargets {
+		t.Run(targetType.name, func(t *testing.T) {
+			var libraryRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/":
+					_, _ = io.WriteString(w, `{"MediaContainer":{"version":"1.40.0"}}`)
+				case targetType.libraries:
+					libraryRequests.Add(1)
+					_, _ = io.WriteString(w, targetType.payload)
+				default:
+					t.Errorf("unexpected scan request to %s", r.URL.Path)
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			}))
+			defer server.Close()
+			target, err := targetType.new(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var workers sync.WaitGroup
+			start := make(chan struct{})
+			for range 8 {
+				workers.Go(func() {
+					<-start
+					if err := target.Scan(autoscan.Scan{Folder: "/media/series"}); !errors.Is(err, autoscan.ErrScanRejected) {
+						t.Errorf("Scan() = %v, want ErrScanRejected", err)
+					}
+				})
+			}
+			close(start)
+			workers.Wait()
+			if got := libraryRequests.Load(); got != 1 {
+				t.Errorf("concurrent discovery made %d requests, want 1", got)
 			}
 		})
 	}

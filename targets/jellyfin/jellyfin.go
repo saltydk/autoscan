@@ -3,6 +3,7 @@ package jellyfin
 import (
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"sync"
 
@@ -66,7 +67,7 @@ func (t *target) Scan(scan autoscan.Scan) error {
 
 	lib, err := t.getScanLibrary(scanFolder)
 	if err != nil {
-		if errors.Is(err, autoscan.ErrTargetUnavailable) || errors.Is(err, autoscan.ErrFatal) {
+		if errors.Is(err, autoscan.ErrScanRejected) || errors.Is(err, autoscan.ErrTargetUnavailable) || errors.Is(err, autoscan.ErrFatal) {
 			return err
 		}
 		t.log.Warn().
@@ -107,12 +108,18 @@ func (t *target) loadLibraries() ([]library, error) {
 }
 
 func (t *target) getScanLibrary(folder string) (*library, error) {
-	librariesSnapshot, err := t.loadLibraries()
+	libraries, err := t.loadLibraries()
 	if err != nil {
 		return nil, err
 	}
-	for _, l := range librariesSnapshot {
-		if strings.HasPrefix(folder, l.Path) {
+	cleanFolder := path.Clean(folder)
+	for _, l := range libraries {
+		if l.Path != "" && cleanFolder == path.Clean(l.Path) {
+			return nil, fmt.Errorf("%s is the root of library %q; scan a movie, show, or season folder instead: %w", folder, l.Name, autoscan.ErrScanRejected)
+		}
+	}
+	for _, l := range libraries {
+		if strings.HasPrefix(cleanFolder, strings.TrimRight(path.Clean(l.Path), "/")+"/") {
 			return &l, nil
 		}
 	}
