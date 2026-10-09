@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       source-ref:
-        description: Ref that must still point to source-sha at publication
+        description: Branch or tag selecting the image publication policy
         required: true
         type: string
       release-tag:
@@ -154,17 +154,9 @@ jobs:
           SECURITY_REPORT: ${{ steps.security.outputs.report-status }}
           KEV: ${{ steps.security.outputs.kev-status }}
         run: |
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          report = {key.lower(): os.environ[key] or "unavailable" for key in
-                    ("PLATFORM", "SOURCE_SHA", "BINARY_SHA", "VARIANT", "RUNTIME", "SECURITY_REPORT", "KEV")}
-          Path("candidate.json").write_text(json.dumps(report, indent=2) + "\n")
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write(f"### {report['platform']}\n\n")
-              for key, value in report.items():
-                  summary.write(f"- {key}: `{value}`\n")
-          PY
+          python3 -m scripts.publication candidate --platform "$PLATFORM" --source-sha "$SOURCE_SHA" \
+            --binary-sha "$BINARY_SHA" --variant "$VARIANT" --runtime "$RUNTIME" \
+            --security-report "$SECURITY_REPORT" --kev "$KEV" --summary "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -180,6 +172,8 @@ jobs:
     needs: [prepare, test-image]
     if: needs.prepare.outputs.tags != '[]'
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.promotion.outputs.published }}
     env:
       GH_TOKEN: ${{ github.token }}
       RECIPE: ${{ inputs.recipe }}
@@ -192,6 +186,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source-sha }}
+          fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
           name: ${{ needs.prepare.outputs.binary-artifact }}
@@ -202,13 +197,15 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Reject superseded source and release
+      - name: Check publication eligibility
+        id: eligibility
         run: |
           python3 scripts/image.py --recipe "$RECIPE" --variant "$VARIANT" check-promotion \
             --source-ref "$SOURCE_REF" --source-sha "$SOURCE_SHA" \
-            --release-tag "$RELEASE_TAG" --binary-sha "$BINARY_SHA"
+            --release-tag "$RELEASE_TAG" --binary-sha "$BINARY_SHA" --github-output "$GITHUB_OUTPUT"
       - name: Publish immutable candidate
         id: image
+        if: steps.eligibility.outputs.eligible == 'true'
         uses: docker/build-push-action@v7
         with:
           context: docker/${{ inputs.recipe }}
@@ -227,31 +224,25 @@ jobs:
             type=gha,scope=autoscan-${{ inputs.recipe }}-${{ inputs.variant }}-arm64
             type=gha,scope=autoscan-${{ inputs.recipe }}-${{ inputs.variant }}-armv7
       - name: Verify and promote accepted manifest
+        id: promotion
+        if: steps.eligibility.outputs.eligible == 'true'
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
           VERSION: ${{ needs.prepare.outputs.version }}
           TAGS: ${{ needs.prepare.outputs.tags }}
         run: |
-          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          reference="saltydk/autoscan@${IMAGE_DIGEST}"
-          python3 scripts/image.py --recipe "$RECIPE" --variant "$VARIANT" verify-publication "$reference" "$SOURCE_SHA" \
-            --binary-sha "$BINARY_SHA" --version "$VERSION"
-          python3 scripts/image.py --recipe "$RECIPE" --variant "$VARIANT" check-promotion \
-            --source-ref "$SOURCE_REF" --source-sha "$SOURCE_SHA" \
-            --release-tag "$RELEASE_TAG" --binary-sha "$BINARY_SHA"
-          mapfile -t tags < <(jq -r '.[]' <<< "$TAGS")
-          for tag in "${tags[@]}"; do
-            docker buildx imagetools create --tag "saltydk/autoscan:${tag}" "$reference"
-            actual=$(docker buildx imagetools inspect "saltydk/autoscan:${tag}" --format '{{json .Manifest}}' | jq -r .digest)
-            [[ "$actual" == "$IMAGE_DIGEST" ]]
-            printf '%s@%s\n' "saltydk/autoscan:${tag}" "$IMAGE_DIGEST" >> published.txt
-          done
+          python3 -m scripts.publication promote --recipe "$RECIPE" --variant "$VARIANT" \
+            --source-ref "$SOURCE_REF" --source-sha "$SOURCE_SHA" --release-tag "$RELEASE_TAG" \
+            --binary-sha "$BINARY_SHA" --image-digest "$IMAGE_DIGEST" --version "$VERSION" \
+            --tags "$TAGS" --github-output "$GITHUB_OUTPUT"
       - name: Retain publication records
-        if: always()
+        if: ${{ always() && hashFiles('publication-attempts.txt') != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: published-images-${{ inputs.recipe }}-${{ inputs.variant }}
-          path: published.txt
+          path: |
+            publication-attempts.txt
+            published.txt
           if-no-files-found: warn
 
   acceptance:
@@ -259,21 +250,23 @@ jobs:
     needs: [prepare, test-image, publish-image]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-sha }}
       - name: Summarize image acceptance
         env:
           PREPARE: ${{ needs.prepare.result }}
           TESTS: ${{ needs.test-image.result }}
           PUBLISH: ${{ needs.publish-image.result }}
+          PUBLISHED: ${{ needs.publish-image.outputs.published }}
           TAGS: ${{ needs.prepare.outputs.tags }}
         run: |
-          printf '| Stage | Result |\n| --- | --- |\n| Inputs | %s |\n| Image acceptance | %s |\n| Publication | %s |\n' \
-            "$PREPARE" "$TESTS" "$PUBLISH" >> "$GITHUB_STEP_SUMMARY"
-          [[ "$PREPARE" == success && "$TESTS" == success ]]
-          [[ "$TAGS" == '[]' || "$PUBLISH" == success ]]
+          python3 -m scripts.publication summarize --prepare "$PREPARE" --tests "$TESTS" \
+            --publish "$PUBLISH" --published "$PUBLISHED" --tags "$TAGS" --summary "$GITHUB_STEP_SUMMARY"
 
   published-security:
     needs: [prepare, publish-image]
-    if: ${{ !cancelled() && needs.publish-image.result == 'success' && needs.prepare.outputs.tags != '[]' }}
+    if: ${{ !cancelled() && needs.publish-image.result == 'success' && needs.publish-image.outputs.published == 'true' }}
     permissions:
       contents: read
       security-events: write

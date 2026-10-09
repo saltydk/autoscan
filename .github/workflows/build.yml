@@ -17,8 +17,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: autoscan-build-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: autoscan-build
+  queue: max
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -86,8 +87,11 @@ jobs:
     needs: [build, image]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.build.outputs.source-sha || inputs.source-sha || github.event.pull_request.head.sha || github.sha }}
       - name: Require binary and image checks
         env:
           BUILD: ${{ needs.build.result }}
           IMAGE: ${{ needs.image.result }}
-        run: '[[ "$BUILD" == success && "$IMAGE" == success ]]'
+        run: python3 -m scripts.publication summarize-build --build "$BUILD" --images "$IMAGE"
