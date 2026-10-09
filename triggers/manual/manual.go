@@ -74,8 +74,18 @@ func (h handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	scans := make([]autoscan.Scan, 0)
 
 	for _, dir := range directories {
+		if !autoscan.ValidScanPath(dir) {
+			rlog.Error().Msg("Manual webhook directories must be absolute paths without NUL bytes")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		// Rewrite the path based on the provided rewriter.
 		folderPath := h.rewrite(path.Clean(dir))
+		if !autoscan.ValidScanPath(folderPath) {
+			rlog.Error().Msg("Manual webhook rewrite must produce an absolute path without NUL bytes")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
 
 		scans = append(scans, autoscan.Scan{
 			Folder:   folderPath,
