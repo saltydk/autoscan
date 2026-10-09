@@ -28,6 +28,8 @@ tasks:
       - '**/*.go'
       - ./go.mod
       - ./go.sum
+    generates:
+      - vendor/modules.txt
     cmds:
       - go mod tidy
       - go mod vendor
