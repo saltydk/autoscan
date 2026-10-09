@@ -77,28 +77,38 @@ func (h handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	var folderPath string
 
-	if strings.EqualFold(event.Type, "Download") || strings.EqualFold(event.Type, "MovieFileDelete") {
-		if event.File.RelativePath == "" || event.Movie.FolderPath == "" {
-			rlog.Error().Msg("Required fields are missing")
+	switch {
+	case strings.EqualFold(event.Type, "Download"), strings.EqualFold(event.Type, "MovieFileDelete"):
+		if !autoscan.ValidRelativeFilePath(event.File.RelativePath) || !autoscan.ValidScanPath(event.Movie.FolderPath) {
+			rlog.Error().Msg("Required paths are missing or invalid")
 			rw.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
 		folderPath = path.Dir(path.Join(event.Movie.FolderPath, event.File.RelativePath))
-	}
 
-	if strings.EqualFold(event.Type, "MovieDelete") || strings.EqualFold(event.Type, "Rename") {
-		if event.Movie.FolderPath == "" {
-			rlog.Error().Msg("Required fields are missing")
+	case strings.EqualFold(event.Type, "MovieDelete"), strings.EqualFold(event.Type, "Rename"):
+		if !autoscan.ValidScanPath(event.Movie.FolderPath) {
+			rlog.Error().Msg("Required paths are missing or invalid")
 			rw.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
 		folderPath = event.Movie.FolderPath
+	default:
+		rw.WriteHeader(http.StatusOK)
+		return
+	}
+
+	rewritten := h.rewrite(folderPath)
+	if !autoscan.ValidScanPath(rewritten) {
+		rlog.Error().Msg("Rewritten scan path is invalid")
+		rw.WriteHeader(http.StatusBadRequest)
+		return
 	}
 
 	scan := autoscan.Scan{
-		Folder:   h.rewrite(folderPath),
+		Folder:   rewritten,
 		Priority: h.priority,
 		Time:     now(),
 	}
