@@ -399,6 +399,12 @@ are removed from the affected queue and do not count as processed deliveries.
 The cumulative counters reset when Autoscan restarts; remaining deliveries are
 read from the persistent database.
 
+### HTTP and logging options
+
+Bernard logs a warning if a Drive sync is still running after 30 minutes. It
+continues waiting for that sync and preserves the existing prevention of
+overlapping syncs. The warning does not cancel or recover the job.
+
 ## Targets
 
 While collecting Scans is fun and all, they need to have a final destination.

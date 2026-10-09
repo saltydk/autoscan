@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	maxSyncRetries = 5
+	maxSyncRetries   = 5
+	syncWarningAfter = 30 * time.Minute
 )
 
 type Config struct {
@@ -233,12 +234,17 @@ func (d daemon) startAutoSync() error {
 
 			// full sync
 			if fullSync {
-				l.Info().Msg("Starting full sync")
-				start := time.Now()
-				if err := d.bernard.FullSync(drive.ID); err != nil {
-					return fmt.Errorf("%v: performing full sync: %w", drive.ID, err)
+				if err := d.runSyncWithWarning(drive.ID, "full", func() error {
+					l.Info().Msg("Starting full sync")
+					start := time.Now()
+					if err := d.bernard.FullSync(drive.ID); err != nil {
+						return fmt.Errorf("%v: performing full sync: %w", drive.ID, err)
+					}
+					l.Info().Msgf("Finished full sync in %s", time.Since(start))
+					return nil
+				}); err != nil {
+					return err
 				}
-				l.Info().Msgf("Finished full sync in %s", time.Since(start))
 				fullSync = false
 				return nil
 			}
@@ -259,6 +265,26 @@ func (d daemon) startAutoSync() error {
 }
 
 func (d daemon) partialSync(drive *drive) error {
+	return d.runSyncWithWarning(drive.ID, "partial", func() error {
+		return d.syncChanges(drive)
+	})
+}
+
+func (d daemon) runSyncWithWarning(driveID, source string, syncFn func() error) error {
+	start := time.Now()
+	timer := time.AfterFunc(syncWarningAfter, func() {
+		d.log.Warn().
+			Str("drive_id", driveID).
+			Str("sync_source", source).
+			Dur("elapsed", time.Since(start)).
+			Msg("Drive sync is taking longer than expected")
+	})
+	defer timer.Stop()
+	// Keep the sync in this job so its cron guard and semaphore remain owned.
+	return syncFn()
+}
+
+func (d daemon) syncChanges(drive *drive) error {
 	l := d.withDriveLog(drive.ID)
 	dh, diff := d.store.NewDifferencesHook()
 	ph := NewPostProcessBernardDiff(drive.ID, d.store, diff)
