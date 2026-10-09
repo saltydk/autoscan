@@ -40,16 +40,19 @@ func New(c Config) (*Processor, error) {
 }
 
 type Processor struct {
-	anchors    []string
-	minimumAge time.Duration
-	store      *datastore
-	processed  atomic.Int64
-	received   atomic.Int64
-	retried    atomic.Int64
-	skipped    atomic.Int64
-	rejected   atomic.Int64
-	targetMu   sync.RWMutex
-	targetIDs  []string
+	anchors        []string
+	minimumAge     time.Duration
+	store          *datastore
+	processed      atomic.Int64
+	received       atomic.Int64
+	retried        atomic.Int64
+	skipped        atomic.Int64
+	rejected       atomic.Int64
+	anchorMu       sync.Mutex
+	anchorObserved bool
+	anchorMissing  []string
+	targetMu       sync.RWMutex
+	targetIDs      []string
 }
 
 func (p *Processor) Add(scans ...autoscan.Scan) error {
@@ -149,10 +152,8 @@ func (p *Processor) Process(targets []autoscan.Target) error {
 	}
 
 	// Check whether all anchors are present
-	for _, anchor := range p.anchors {
-		if !fileExists(anchor) {
-			return fmt.Errorf("%s: %w", anchor, autoscan.ErrAnchorUnavailable)
-		}
+	if err := p.checkAnchors(); err != nil {
+		return err
 	}
 
 	// Fatal or Target Unavailable -> return original error
@@ -185,10 +186,8 @@ func (p *Processor) ProcessTarget(targetID string, target autoscan.Target) error
 	if err != nil {
 		return err
 	}
-	for _, anchor := range p.anchors {
-		if !fileExists(anchor) {
-			return fmt.Errorf("%s: %w", anchor, autoscan.ErrAnchorUnavailable)
-		}
+	if err := p.checkAnchors(); err != nil {
+		return err
 	}
 	err = target.Scan(scan.Scan)
 	if err != nil && !errors.Is(err, autoscan.ErrScanRejected) && !errors.Is(err, autoscan.ErrLibraryNotMatched) {

@@ -333,6 +333,9 @@ However, they can be used to check whether a file exists on the file system.
 If the file does not exist and you have not made any changes to the file, then it is certain that the remote mount must be offline or the software is having problems.
 
 When an anchor file is unavailable, the processor will halt its operations until the file is back online.
+Autoscan logs an outage when the set of missing anchor files changes, and logs
+recovery when all anchor files return. Retry checks continue without repeating
+the same error. Anchor paths must still refer to files, not directories.
 
 We suggest you to use different anchor file names if you merge multiple remote mounts together with a tool such as [UnionFS](https://unionfs.filesystems.org) or [MergerFS](https://github.com/trapexit/mergerfs).
 Each remote mount MUST have its own anchor file and its own name for that anchor file.

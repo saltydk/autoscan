@@ -60,7 +60,7 @@ func runTarget(ctx context.Context, proc *processor.Processor, target configured
 		case errors.Is(err, autoscan.ErrNoScans):
 			logger.Trace().Msg("No scans available for target")
 		case errors.Is(err, autoscan.ErrAnchorUnavailable):
-			logger.Error().Err(err).Msg("Anchor unavailable, retaining queued scans")
+			// The processor logs anchor outages and recovery once per state change.
 		case errors.Is(err, autoscan.ErrTargetUnavailable):
 			proc.RecordRetry()
 			available = false
