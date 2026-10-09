@@ -235,57 +235,15 @@ func (d daemon) startAutoSync() error {
 			if fullSync {
 				l.Info().Msg("Starting full sync")
 				start := time.Now()
-
 				if err := d.bernard.FullSync(drive.ID); err != nil {
 					return fmt.Errorf("%v: performing full sync: %w", drive.ID, err)
 				}
-
 				l.Info().Msgf("Finished full sync in %s", time.Since(start))
 				fullSync = false
 				return nil
 			}
 
-			// create partial sync
-			dh, diff := d.store.NewDifferencesHook()
-			ph := NewPostProcessBernardDiff(drive.ID, d.store, diff)
-			ch, paths := NewPathsHook(drive.ID, d.store, diff)
-
-			l.Trace().Msg("Running partial sync")
-			start := time.Now()
-
-			// do partial sync
-			err := d.bernard.PartialSync(drive.ID, dh, ph, ch)
-			if err != nil {
-				return fmt.Errorf("%v: performing partial sync: %w", drive.ID, err)
-			}
-
-			l.Trace().
-				Int("new", len(paths.NewFolders)).
-				Int("old", len(paths.OldFolders)).
-				Msgf("Partial sync finished in %s", time.Since(start))
-
-			// translate paths to scan task
-			task := d.getScanTask(&(drive), paths)
-
-			// move scans to processor
-			if len(task.scans) > 0 {
-				l.Trace().
-					Interface("scans", task.scans).
-					Msg("Scans moving to processor")
-
-				err := d.callback(task.scans...)
-				if err != nil {
-					return fmt.Errorf("%v: moving scans to processor: %v: %w",
-						drive.ID, err, autoscan.ErrFatal)
-				}
-
-				l.Info().
-					Int("added", task.added).
-					Int("removed", task.removed).
-					Msg("Scan moved to processor")
-			}
-
-			return nil
+			return d.partialSync(&drive)
 		})
 
 		id, err := c.AddJob(d.cronSchedule, cron.NewChain(cron.SkipIfStillRunning(cron.DiscardLogger)).Then(job))
@@ -297,6 +255,48 @@ func (d daemon) startAutoSync() error {
 	}
 
 	c.Start()
+	return nil
+}
+
+func (d daemon) partialSync(drive *drive) error {
+	l := d.withDriveLog(drive.ID)
+	dh, diff := d.store.NewDifferencesHook()
+	ph := NewPostProcessBernardDiff(drive.ID, d.store, diff)
+	ch, paths := NewPathsHook(drive.ID, d.store, diff)
+	// Persist scans before Bernard advances its cursor so a failed handoff can be replayed.
+	handoff := func(_ ds.Drive, _ []ds.File, _ []ds.Folder, _ []string) error {
+		task := d.getScanTask(drive, paths)
+		if len(task.scans) == 0 {
+			return nil
+		}
+
+		l.Trace().
+			Interface("scans", task.scans).
+			Msg("Scans moving to processor")
+
+		if err := d.callback(task.scans...); err != nil {
+			return fmt.Errorf("%v: moving scans to processor: %w", drive.ID, err)
+		}
+
+		l.Info().
+			Int("added", task.added).
+			Int("removed", task.removed).
+			Msg("Scan moved to processor")
+		return nil
+	}
+
+	l.Trace().Msg("Running partial sync")
+	start := time.Now()
+
+	if err := d.bernard.PartialSync(drive.ID, dh, ph, ch, handoff); err != nil {
+		return fmt.Errorf("%v: performing partial sync: %w", drive.ID, err)
+	}
+
+	l.Trace().
+		Int("new", len(paths.NewFolders)).
+		Int("old", len(paths.OldFolders)).
+		Msgf("Partial sync finished in %s", time.Since(start))
+
 	return nil
 }
 
