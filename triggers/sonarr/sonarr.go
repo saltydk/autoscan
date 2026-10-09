@@ -86,8 +86,8 @@ func (h handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	// a Download event is either an upgrade or a new file.
 	// the EpisodeFileDelete event shares the same request format as Download.
 	if strings.EqualFold(event.Type, "Download") || strings.EqualFold(event.Type, "EpisodeFileDelete") {
-		if event.File.RelativePath == "" || event.Series.Path == "" {
-			rlog.Error().Msg("Required fields are missing")
+		if !autoscan.ValidRelativeFilePath(event.File.RelativePath) || !autoscan.ValidScanPath(event.Series.Path) {
+			rlog.Error().Msg("Required paths are missing or invalid")
 			rw.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -99,8 +99,8 @@ func (h handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	// An entire show has been deleted
 	if strings.EqualFold(event.Type, "SeriesDelete") {
-		if event.Series.Path == "" {
-			rlog.Error().Msg("Required fields are missing")
+		if !autoscan.ValidScanPath(event.Series.Path) {
+			rlog.Error().Msg("Required paths are missing or invalid")
 			rw.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -110,8 +110,8 @@ func (h handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.EqualFold(event.Type, "Rename") {
-		if event.Series.Path == "" {
-			rlog.Error().Msg("Required fields are missing")
+		if !autoscan.ValidScanPath(event.Series.Path) {
+			rlog.Error().Msg("Required paths are missing or invalid")
 			rw.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -120,6 +120,11 @@ func (h handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		encountered := make(map[string]bool)
 
 		for _, renamedFile := range event.RenamedFiles {
+			if !autoscan.ValidScanPath(renamedFile.PreviousPath) || !autoscan.ValidRelativeFilePath(renamedFile.RelativePath) {
+				rlog.Error().Msg("Required rename paths are missing or invalid")
+				rw.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			previousPath := path.Dir(renamedFile.PreviousPath)
 			currentPath := path.Dir(path.Join(event.Series.Path, renamedFile.RelativePath))
 
@@ -137,10 +142,20 @@ func (h handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if len(paths) == 0 {
+		rw.WriteHeader(http.StatusOK)
+		return
+	}
+
 	var scans []autoscan.Scan
 
 	for _, folderPath := range paths {
 		folderPath := h.rewrite(folderPath)
+		if !autoscan.ValidScanPath(folderPath) {
+			rlog.Error().Msg("Rewritten scan path is invalid")
+			rw.WriteHeader(http.StatusBadRequest)
+			return
+		}
 
 		scan := autoscan.Scan{
 			Folder:   folderPath,
