@@ -323,7 +323,7 @@ versions cannot read these queues. For a rollback, restore the pre-upgrade datab
 and configuration, or drain all target queues, including dormant queues, before
 returning to an older binary.
 An older version's strict configuration parser also rejects the new optional
-`name` target settings.
+`name` and `response-limit` target settings.
 
 ### Anchor files
 
@@ -438,6 +438,21 @@ with a trailing slash. Submit a movie, show, or season folder instead. Rejection
 logs name the library and requested path; they affect only that target's delivery.
 Paths outside a target's libraries are expected skips and are logged at debug
 level. Other targets still receive their own queued deliveries.
+
+Plex, Emby, and Jellyfin limit decoded API responses to 10 MiB by default.
+Oversized responses retain queued work and retry with an error describing the
+limit. If a server legitimately returns larger responses, set `response-limit`
+in that target's configuration to a larger byte count, or to `0` to disable the
+limit. The setting is optional and does not change the target's queue identity.
+This default can affect servers with very large library metadata responses.
+
+```yaml
+targets:
+  jellyfin:
+    - url: https://jellyfin.domain.tld
+      token: XXXX
+      response-limit: 20971520 # 20 MiB; 0 disables the byte limit
+```
 
 ### Plex
 

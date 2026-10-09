@@ -12,18 +12,20 @@ import (
 )
 
 type apiClient struct {
-	client  *http.Client
-	log     zerolog.Logger
-	baseURL string
-	token   string
+	client        *http.Client
+	log           zerolog.Logger
+	baseURL       string
+	token         string
+	responseLimit int64
 }
 
 func newAPIClient(baseURL string, token string, log zerolog.Logger) apiClient {
 	return apiClient{
-		client:  &http.Client{Timeout: autoscan.TargetHTTPTimeout},
-		log:     log,
-		baseURL: baseURL,
-		token:   token,
+		client:        &http.Client{Timeout: autoscan.TargetHTTPTimeout},
+		log:           log,
+		baseURL:       baseURL,
+		token:         token,
+		responseLimit: autoscan.DefaultTargetResponseLimit,
 	}
 }
 
@@ -102,8 +104,8 @@ func (c apiClient) Libraries() ([]library, error) {
 	}
 
 	resp := make([]Response, 0)
-	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
-		return nil, fmt.Errorf("failed decoding libraries request response: %w", autoscan.HTTPResponseError(err))
+	if err := autoscan.DecodeResponseBody(res, c.responseLimit, &resp); err != nil {
+		return nil, fmt.Errorf("failed decoding libraries request response: %w", err)
 	}
 
 	// process response

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,3 +48,38 @@ func TestAPIClientRequestTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIClientResponseLimitClosesBody(t *testing.T) {
+	for _, limit := range []int64{8, 128} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			body := &plexTrackedBody{Reader: strings.NewReader(`{"MediaContainer":{"version":"1.40.0"}}`)}
+			client := newAPIClient("http://plex", "token", zerolog.Nop())
+			client.responseLimit = limit
+			client.client.Transport = plexRoundTrip(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Body: body, ContentLength: -1, Request: req}, nil
+			})
+			version, err := client.Version()
+			if limit == 8 {
+				if !errors.Is(err, autoscan.ErrTargetUnavailable) || errors.Is(err, autoscan.ErrFatal) {
+					t.Fatalf("Version() oversized response = %v", err)
+				}
+			} else if err != nil || version != "1.40.0" {
+				t.Fatalf("Version() = %q, %v", version, err)
+			}
+			if !body.closed {
+				t.Error("response body was not closed")
+			}
+		})
+	}
+}
+
+type plexTrackedBody struct {
+	io.Reader
+	closed bool
+}
+
+func (body *plexTrackedBody) Close() error { body.closed = true; return nil }
+
+type plexRoundTrip func(*http.Request) (*http.Response, error)
+
+func (fn plexRoundTrip) RoundTrip(request *http.Request) (*http.Response, error) { return fn(request) }

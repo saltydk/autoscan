@@ -13,11 +13,12 @@ import (
 )
 
 type Config struct {
-	Name      string             `yaml:"name"`
-	URL       string             `yaml:"url"`
-	Token     string             `yaml:"token"`
-	Rewrite   []autoscan.Rewrite `yaml:"rewrite"`
-	Verbosity string             `yaml:"verbosity"`
+	Name          string             `yaml:"name"`
+	ResponseLimit *int64             `yaml:"response-limit"`
+	URL           string             `yaml:"url"`
+	Token         string             `yaml:"token"`
+	Rewrite       []autoscan.Rewrite `yaml:"rewrite"`
+	Verbosity     string             `yaml:"verbosity"`
 }
 
 type target struct {
@@ -40,7 +41,12 @@ func New(c Config) (autoscan.Target, error) {
 	if err != nil {
 		return nil, err
 	}
+	limit, err := autoscan.ResolveTargetResponseLimit(c.ResponseLimit)
+	if err != nil {
+		return nil, err
+	}
 	api := newAPIClient(c.URL, c.Token, l)
+	api.responseLimit = limit
 
 	return &target{
 		url:   c.URL,
