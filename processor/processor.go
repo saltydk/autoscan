@@ -56,16 +56,30 @@ type Processor struct {
 }
 
 func (p *Processor) Add(scans ...autoscan.Scan) error {
+	if len(scans) == 0 {
+		return nil
+	}
+	validScans := make([]autoscan.Scan, 0, len(scans))
+	for _, scan := range scans {
+		if !autoscan.ValidScanPath(scan.Folder) {
+			log.Debug().Str("path", scan.Folder).Msg("Ignoring scan with invalid folder path")
+			continue
+		}
+		validScans = append(validScans, scan)
+	}
+	if len(validScans) == 0 {
+		return nil
+	}
 	p.targetMu.RLock()
 	defer p.targetMu.RUnlock()
 	var err error
 	if len(p.targetIDs) > 0 {
-		err = p.store.UpsertTargets(p.targetIDs, scans)
+		err = p.store.UpsertTargets(p.targetIDs, validScans)
 	} else {
-		err = p.store.Upsert(scans)
+		err = p.store.Upsert(validScans)
 	}
 	if err == nil {
-		p.recordReceived(len(scans))
+		p.recordReceived(len(validScans))
 	}
 	return err
 }
