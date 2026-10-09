@@ -3,6 +3,7 @@ package inotify
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -50,8 +51,45 @@ func (d *daemon) handleEvent(event fsnotify.Event) error {
 }
 
 func (d *daemon) watchCreatedDirectory(name string) error {
-	if err := filepath.Walk(name, d.walkFunc); err != nil {
+	folders := make(map[string]struct{})
+	if err := filepath.Walk(name, func(file string, info os.FileInfo, err error) error {
+		if err := d.walkFunc(file, info, err); err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Stat(file)
+			if err != nil || target.IsDir() {
+				return nil
+			}
+		}
+		folder, allowed, err := d.filteredFolder(file, false)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return nil
+		}
+		p, err := d.getPathObject(file)
+		if err != nil {
+			return err
+		}
+		outer := filepath.Clean(p.Rewriter(name))
+		parent := filepath.Clean(p.Rewriter(filepath.Dir(file)))
+		// Keep outer-folder batching when directory and file rewrites agree.
+		// Filename-specific mappings retain their actual destination parents.
+		if folder == parent && withinDirectory(folder, outer) {
+			folder = outer
+		}
+		folders[folder] = struct{}{}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("watch new directory: %w", err)
+	}
+	for _, folder := range slices.Sorted(maps.Keys(folders)) {
+		d.queue.inputs <- folder
 	}
 	return nil
 }

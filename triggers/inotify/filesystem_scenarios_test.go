@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -153,6 +155,35 @@ func TestInotifyFilesystemScenarios(t *testing.T) {
 			}
 			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(f.d), []string{directory})
 		}},
+		{"import_populated_movie_directory", func(t *testing.T, f inotifyFilesystemFixture) {
+			source := filepath.Join(f.staging, "Imported Movie")
+			destination := filepath.Join(f.movies, "Imported Movie (2026)")
+			inotifyScenarioMakeDir(t, source)
+			inotifyScenarioWrite(t, filepath.Join(source, "movie.mkv"))
+			inotifyScenarioRename(t, source, destination)
+			inotifyScenarioWaitForWatch(t, f.d, destination)
+			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(f.d), []string{destination})
+		}},
+		{"import_populated_show_with_nested_season", func(t *testing.T, f inotifyFilesystemFixture) {
+			source := filepath.Join(f.staging, "Imported Show")
+			destination := filepath.Join(f.tv, "Imported Show (2026)")
+			inotifyScenarioMakeDir(t, filepath.Join(source, "Season 1"))
+			inotifyScenarioWrite(t, filepath.Join(source, "Season 1", "episode.mkv"))
+			inotifyScenarioRename(t, source, destination)
+			inotifyScenarioWaitForWatch(t, f.d, filepath.Join(destination, "Season 1"))
+			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(f.d), []string{destination})
+		}},
+		{"import_populated_season_into_existing_show", func(t *testing.T, f inotifyFilesystemFixture) {
+			source := filepath.Join(f.staging, "Season 02")
+			destination := filepath.Join(f.show, "Season 02")
+			inotifyScenarioMakeDir(t, source)
+			for episode := range 12 {
+				inotifyScenarioWrite(t, filepath.Join(source, fmt.Sprintf("Example Show - S02E%02d.mkv", episode+1)))
+			}
+			inotifyScenarioRename(t, source, destination)
+			inotifyScenarioWaitForWatch(t, f.d, destination)
+			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(f.d), []string{destination})
+		}},
 		{"later_file_in_imported_nested_season", func(t *testing.T, f inotifyFilesystemFixture) {
 			source := filepath.Join(f.staging, "Imported Show")
 			destination := filepath.Join(f.tv, "Imported Show (2026)")
@@ -164,6 +195,54 @@ func TestInotifyFilesystemScenarios(t *testing.T) {
 			_ = collectInotifyScenarioFolders(f.d)
 			inotifyScenarioWrite(t, filepath.Join(season, "later.mkv"))
 			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(f.d), []string{season})
+		}},
+		{"new_populated_directory_during_event_backpressure", func(t *testing.T, f inotifyFilesystemFixture) {
+			// Hold the handler before queue handoff so the newly created directory
+			// is populated before its Create notification can be processed.
+			entered := make(chan struct{})
+			var barrier sync.Once
+			root := inotifyScenarioRoot(f.root)
+			root.Allowed = func(file string) bool {
+				if strings.HasSuffix(file, "/barrier.mkv") {
+					barrier.Do(func() { close(entered) })
+				}
+				return true
+			}
+			d := &daemon{paths: []path{root}, queue: &queue{inputs: make(chan string)}, log: f.d.log}
+			if err := d.startMonitoring(); err != nil {
+				t.Fatal(err)
+			}
+			inotifyScenarioWrite(t, filepath.Join(f.movie, "barrier.mkv"))
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("event handler did not reach the handoff barrier")
+			}
+			incoming := filepath.Join(f.movies, "New Movie (2026)")
+			inotifyScenarioMakeDir(t, incoming)
+			inotifyScenarioWrite(t, filepath.Join(incoming, "movie.mkv"))
+			select {
+			case <-d.queue.inputs:
+			case <-time.After(time.Second):
+				t.Fatal("event handler did not release its initial handoff")
+			}
+			inotifyScenarioWaitForWatch(t, d, incoming)
+			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(d), []string{incoming})
+		}},
+		{"rename_populated_directory_within_watched_root", func(t *testing.T, f inotifyFilesystemFixture) {
+			next := filepath.Join(f.movies, "Renamed Movie (2026)")
+			inotifyScenarioRename(t, f.movie, next)
+			inotifyScenarioWaitForWatch(t, f.d, next)
+			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(f.d), []string{f.movie, next})
+		}},
+		{"move_populated_directory_between_watched_parents", func(t *testing.T, f inotifyFilesystemFixture) {
+			otherShow := filepath.Join(f.tv, "Another Show (2026)")
+			inotifyScenarioMakeDir(t, otherShow)
+			inotifyScenarioWaitForWatch(t, f.d, otherShow)
+			next := filepath.Join(otherShow, "Season 01")
+			inotifyScenarioRename(t, f.season, next)
+			inotifyScenarioWaitForWatch(t, f.d, next)
+			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(f.d), []string{f.season, next})
 		}},
 		{"move_populated_directory_out_of_watched_tree", func(t *testing.T, f inotifyFilesystemFixture) {
 			inotifyScenarioRename(t, f.movie, filepath.Join(f.staging, "Removed Movie"))
@@ -199,6 +278,17 @@ func TestInotifyFilesystemScenarios(t *testing.T) {
 			inotifyScenarioWaitForWatch(t, f.d, directory)
 			inotifyScenarioRemove(t, directory)
 			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(f.d), []string{directory})
+		}},
+		{"rename_dotted_movie_directory", func(t *testing.T, f inotifyFilesystemFixture) {
+			old := filepath.Join(f.movies, "Example.Movie.2026.1080p")
+			next := filepath.Join(f.movies, "Example.Movie.2026.2160p")
+			inotifyScenarioMakeDir(t, old)
+			inotifyScenarioWaitForWatch(t, f.d, old)
+			inotifyScenarioWrite(t, filepath.Join(old, "Example.Movie.2026.mkv"))
+			_ = collectInotifyScenarioFolders(f.d)
+			inotifyScenarioRename(t, old, next)
+			inotifyScenarioWaitForWatch(t, f.d, next)
+			assertInotifyScenarioFolders(t, collectInotifyScenarioFolders(f.d), []string{old, next})
 		}},
 		{"hardlink_creation_and_removal", func(t *testing.T, f inotifyFilesystemFixture) {
 			link := filepath.Join(f.other, "linked.mkv")
@@ -242,7 +332,7 @@ func TestInotifyPublicFilesystemDelivery(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("this scenario suite validates the Linux inotify backend")
 	}
-	for _, mode := range []string{"episode_burst_coalesces", "renamed_season_later_episode"} {
+	for _, mode := range []string{"episode_burst_coalesces", "populated_directory_import", "directory_rename", "renamed_season_later_episode"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			if !runInotifyScenario(t) {
