@@ -66,7 +66,7 @@ func NewRewriter(rewriteRules []Rewrite) (Rewriter, error) {
 	for _, rule := range rewriteRules {
 		re, err := regexp.Compile(rule.From)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("compile rewrite %q: %w", rule.From, err)
 		}
 
 		rewrites = append(rewrites, *re)
