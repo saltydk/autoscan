@@ -44,6 +44,10 @@ type Processor struct {
 	minimumAge time.Duration
 	store      *datastore
 	processed  atomic.Int64
+	received   atomic.Int64
+	retried    atomic.Int64
+	skipped    atomic.Int64
+	rejected   atomic.Int64
 	targetMu   sync.RWMutex
 	targetIDs  []string
 }
@@ -51,10 +55,16 @@ type Processor struct {
 func (p *Processor) Add(scans ...autoscan.Scan) error {
 	p.targetMu.RLock()
 	defer p.targetMu.RUnlock()
+	var err error
 	if len(p.targetIDs) > 0 {
-		return p.store.UpsertTargets(p.targetIDs, scans)
+		err = p.store.UpsertTargets(p.targetIDs, scans)
+	} else {
+		err = p.store.Upsert(scans)
 	}
-	return p.store.Upsert(scans)
+	if err == nil {
+		p.recordReceived(len(scans))
+	}
+	return err
 }
 
 // ConfigureTargets assigns legacy work and enables independent durable queues.
@@ -102,9 +112,11 @@ func (p *Processor) CheckAvailability(targets []autoscan.Target) error {
 	return g.Wait()
 }
 
-func (p *Processor) callTargets(targets []autoscan.Target, scan autoscan.Scan) (bool, error) {
+func (p *Processor) callTargets(targets []autoscan.Target, scan autoscan.Scan) (bool, int64, int64, error) {
 	g := new(errgroup.Group)
 	var delivered atomic.Bool
+	var skipped, rejected atomic.Int64
+
 	for _, target := range targets {
 		g.Go(func() error {
 			err := target.Scan(scan)
@@ -113,18 +125,21 @@ func (p *Processor) callTargets(targets []autoscan.Target, scan autoscan.Scan) (
 				delivered.Store(true)
 			case errors.Is(err, autoscan.ErrScanRejected):
 				log.Warn().Err(err).Str("path", scan.Folder).Msg("Target rejected scan")
+				rejected.Add(1)
 				return nil
 			case errors.Is(err, autoscan.ErrLibraryNotMatched):
 				log.Debug().Err(err).Str("path", scan.Folder).Msg("Target skipped unmatched library")
+				skipped.Add(1)
 				return nil
 			}
 			return err
 		})
 	}
+
 	if err := g.Wait(); err != nil {
-		return false, err
+		return false, 0, 0, err
 	}
-	return delivered.Load(), nil
+	return delivered.Load(), skipped.Load(), rejected.Load(), nil
 }
 
 func (p *Processor) Process(targets []autoscan.Target) error {
@@ -141,7 +156,7 @@ func (p *Processor) Process(targets []autoscan.Target) error {
 	}
 
 	// Fatal or Target Unavailable -> return original error
-	delivered, err := p.callTargets(targets, scan)
+	delivered, skipped, rejected, err := p.callTargets(targets, scan)
 	if err != nil {
 		return err
 	}
@@ -152,7 +167,13 @@ func (p *Processor) Process(targets []autoscan.Target) error {
 	}
 
 	if delivered {
-		p.processed.Add(1)
+		p.recordProcessed()
+	}
+	for range skipped {
+		p.recordSkipped()
+	}
+	for range rejected {
+		p.recordRejected()
 	}
 	return nil
 }
@@ -177,13 +198,15 @@ func (p *Processor) ProcessTarget(targetID string, target autoscan.Target) error
 		return ackErr
 	}
 	if errors.Is(err, autoscan.ErrScanRejected) {
+		p.recordRejected()
 		log.Warn().Err(err).Str("target_queue", targetID).Str("path", scan.Folder).
 			Msg("Target rejected scan, removing this delivery from its queue")
 	} else if errors.Is(err, autoscan.ErrLibraryNotMatched) {
+		p.recordSkipped()
 		log.Debug().Err(err).Str("target_queue", targetID).Str("path", scan.Folder).
 			Msg("Target skipped unmatched library")
 	} else {
-		p.processed.Add(1)
+		p.recordProcessed()
 	}
 	return nil
 }

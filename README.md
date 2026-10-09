@@ -380,10 +380,21 @@ The `minimum-age`, `scan-delay` and `scan-stats` fields should be given a string
 
 *Please do not forget the `s`, `m` or `h` suffix, otherwise the time unit defaults to nanoseconds.*
 
-Scan stats will print the following information at a configured interval:
+Scan stats print the following counters at the configured interval:
 
-- Scans processed
-- Scans remaining
+- `received`: input events successfully saved, before folder coalescing
+- `processed`: successful target deliveries
+- `retried`: retryable target failures, including availability checks
+- `skipped`: deliveries outside a target's libraries
+- `rejected`: deliveries deliberately refused, such as library-root scans
+- `remaining`: queued deliveries for currently configured targets
+
+Processed, skipped, rejected, and remaining counts refer to target deliveries.
+A folder waiting
+for two targets counts as two remaining deliveries. Skipped and rejected scans
+are removed from the affected queue and do not count as processed deliveries.
+The cumulative counters reset when Autoscan restarts; remaining deliveries are
+read from the persistent database.
 
 ## Targets
 

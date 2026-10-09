@@ -19,9 +19,14 @@ func scanStats(proc *processor.Processor, interval time.Duration) {
 			sm, err := proc.ScansRemaining()
 			switch {
 			case err == nil:
+				metrics := proc.Metrics()
 				log.Info().
 					Int("remaining", sm).
-					Int64("processed", proc.ScansProcessed()).
+					Int64("received", metrics.Received).
+					Int64("processed", metrics.Processed).
+					Int64("retried", metrics.Retried).
+					Int64("skipped", metrics.Skipped).
+					Int64("rejected", metrics.Rejected).
 					Msg("Scan stats")
 			case errors.Is(err, autoscan.ErrFatal):
 				log.Error().

@@ -144,6 +144,9 @@ func TestTargetWorkerHonorsRetryAfterAndRecovers(t *testing.T) {
 		if remaining, err := proc.ScansRemaining(); err != nil || remaining != 0 {
 			t.Errorf("queue after target recovery = %d, %v", remaining, err)
 		}
+		if got := proc.Metrics().Retried; got != 1 {
+			t.Errorf("retry count after recovery = %d", got)
+		}
 		cancel()
 		workers.Wait()
 	})

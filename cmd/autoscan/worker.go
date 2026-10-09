@@ -62,6 +62,7 @@ func runTarget(ctx context.Context, proc *processor.Processor, target configured
 		case errors.Is(err, autoscan.ErrAnchorUnavailable):
 			logger.Error().Err(err).Msg("Anchor unavailable, retaining queued scans")
 		case errors.Is(err, autoscan.ErrTargetUnavailable):
+			proc.RecordRetry()
 			available = false
 			delay = max(delay, autoscan.RetryDelay(err))
 			logger.Error().Err(err).Dur("retry_delay", delay).Msg("Target unavailable, retaining queued scans")

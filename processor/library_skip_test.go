@@ -39,8 +39,9 @@ func TestLibrarySkipAcknowledgesOnlyItsTargetDelivery(t *testing.T) {
 	if remaining, err := proc.ScansRemaining(); err != nil || remaining != 1 {
 		t.Fatalf("remaining deliveries = %d, %v; want only offline", remaining, err)
 	}
-	if processed := proc.ScansProcessed(); processed != 1 {
-		t.Fatalf("processed deliveries = %d, want one accepted target", processed)
+	metrics := proc.Metrics()
+	if metrics.Received != 1 || metrics.Processed != 1 || metrics.Skipped != 1 || metrics.Rejected != 1 {
+		t.Fatalf("delivery metrics = %+v", metrics)
 	}
 	if err := proc.ProcessTarget("skip", &recordingTarget{}); !errors.Is(err, autoscan.ErrNoScans) {
 		t.Fatalf("skipped delivery remained queued: %v", err)
@@ -56,8 +57,9 @@ func TestLegacyLibrarySkipDoesNotCountAsProcessed(t *testing.T) {
 	if err := proc.Process([]autoscan.Target{target}); err != nil {
 		t.Fatal(err)
 	}
-	if processed := proc.ScansProcessed(); processed != 0 {
-		t.Fatalf("legacy skipped folder counted as processed: %d", processed)
+	metrics := proc.Metrics()
+	if metrics.Processed != 0 || metrics.Skipped != 1 {
+		t.Fatalf("legacy skip metrics = %+v", metrics)
 	}
 	if remaining, err := proc.ScansRemaining(); err != nil || remaining != 0 {
 		t.Fatalf("legacy skip queue = %d, %v", remaining, err)
@@ -76,7 +78,8 @@ func TestLegacyLibrarySkipDoesNotCompleteFailedAcknowledgment(t *testing.T) {
 	if err := proc.Process([]autoscan.Target{target}); !errors.Is(err, autoscan.ErrFatal) {
 		t.Fatalf("failed legacy acknowledgment = %v", err)
 	}
-	if processed := proc.ScansProcessed(); processed != 0 {
-		t.Fatalf("failed acknowledgment counted as processed: %d", processed)
+	metrics := proc.Metrics()
+	if metrics.Processed != 0 || metrics.Skipped != 0 || metrics.Rejected != 0 {
+		t.Fatalf("failed acknowledgment completed metrics = %+v", metrics)
 	}
 }
