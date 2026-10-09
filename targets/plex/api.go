@@ -21,7 +21,7 @@ type apiClient struct {
 
 func newAPIClient(baseURL string, token string, log zerolog.Logger) *apiClient {
 	return &apiClient{
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: autoscan.TargetHTTPTimeout},
 		log:     log,
 		baseURL: baseURL,
 		token:   token,
@@ -49,14 +49,10 @@ func (c apiClient) do(req *http.Request) (*http.Response, error) {
 	// statusCode not in the 2xx range, close response
 	res.Body.Close()
 
-	switch res.StatusCode {
-	case 401:
+	if res.StatusCode == http.StatusUnauthorized {
 		return nil, fmt.Errorf("invalid plex token: %s: %w", res.Status, autoscan.ErrFatal)
-	case 404, 500, 502, 503, 504:
-		return nil, fmt.Errorf("%s: %w", res.Status, autoscan.ErrTargetUnavailable)
-	default:
-		return nil, fmt.Errorf("%s: %w", res.Status, autoscan.ErrFatal)
 	}
+	return nil, autoscan.HTTPStatusError(res)
 }
 
 func (c apiClient) Version() (string, error) {
@@ -81,7 +77,7 @@ func (c apiClient) Version() (string, error) {
 
 	resp := new(Response)
 	if err := json.NewDecoder(res.Body).Decode(resp); err != nil {
-		return "", fmt.Errorf("failed decoding version response: %v: %w", err, autoscan.ErrFatal)
+		return "", fmt.Errorf("failed decoding version response: %w", autoscan.HTTPResponseError(err))
 	}
 
 	return resp.MediaContainer.Version, nil
@@ -121,7 +117,7 @@ func (c apiClient) Libraries() ([]library, error) {
 
 	resp := new(Response)
 	if err := json.NewDecoder(res.Body).Decode(resp); err != nil {
-		return nil, fmt.Errorf("failed decoding libraries response: %v: %w", err, autoscan.ErrFatal)
+		return nil, fmt.Errorf("failed decoding libraries response: %w", autoscan.HTTPResponseError(err))
 	}
 
 	// process response

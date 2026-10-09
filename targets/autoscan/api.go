@@ -20,7 +20,7 @@ type apiClient struct {
 
 func newAPIClient(baseURL string, user string, pass string, log zerolog.Logger) apiClient {
 	return apiClient{
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: autoscan.TargetHTTPTimeout},
 		log:     log,
 		baseURL: baseURL,
 		user:    user,
@@ -46,14 +46,10 @@ func (c apiClient) do(req *http.Request) (*http.Response, error) {
 	// statusCode not in the 2xx range, close response
 	res.Body.Close()
 
-	switch res.StatusCode {
-	case 401:
+	if res.StatusCode == http.StatusUnauthorized {
 		return nil, fmt.Errorf("invalid basic auth: %s: %w", res.Status, autoscan.ErrFatal)
-	case 404, 500, 502, 503, 504:
-		return nil, fmt.Errorf("%s: %w", res.Status, autoscan.ErrTargetUnavailable)
-	default:
-		return nil, fmt.Errorf("%s: %w", res.Status, autoscan.ErrFatal)
 	}
+	return nil, autoscan.HTTPStatusError(res)
 }
 
 func (c apiClient) Available() error {
