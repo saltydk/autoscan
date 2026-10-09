@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -208,6 +209,12 @@ func main() {
 		log.Warn().Msg("Webhooks running without authentication")
 	}
 
+	// Configure durable queues before any trigger can submit work.
+	targets, err := configureTargets(c, proc)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed initialising targets")
+	}
+
 	// daemon triggers
 	for _, t := range c.Triggers.Bernard {
 		trigger, err := bernard.New(t, db)
@@ -263,61 +270,6 @@ func main() {
 		Int("sonarr", len(c.Triggers.Sonarr)).
 		Msg("Initialised triggers")
 
-	// targets
-	targets := make([]autoscan.Target, 0)
-
-	for _, t := range c.Targets.Autoscan {
-		tp, err := ast.New(t)
-		if err != nil {
-			log.Fatal().
-				Err(err).
-				Str("target", "autoscan").
-				Str("target_url", t.URL).
-				Msg("Failed initialising target")
-		}
-
-		targets = append(targets, tp)
-	}
-
-	for _, t := range c.Targets.Plex {
-		tp, err := plex.New(t)
-		if err != nil {
-			log.Fatal().
-				Err(err).
-				Str("target", "plex").
-				Str("target_url", t.URL).
-				Msg("Failed initialising target")
-		}
-
-		targets = append(targets, tp)
-	}
-
-	for _, t := range c.Targets.Emby {
-		tp, err := emby.New(t)
-		if err != nil {
-			log.Fatal().
-				Err(err).
-				Str("target", "emby").
-				Str("target_url", t.URL).
-				Msg("Failed initialising target")
-		}
-
-		targets = append(targets, tp)
-	}
-
-	for _, t := range c.Targets.Jellyfin {
-		tp, err := jellyfin.New(t)
-		if err != nil {
-			log.Fatal().
-				Err(err).
-				Str("target", "jellyfin").
-				Str("target_url", t.URL).
-				Msg("Failed initialising target")
-		}
-
-		targets = append(targets, tp)
-	}
-
 	log.Info().
 		Int("autoscan", len(c.Targets.Autoscan)).
 		Int("plex", len(c.Targets.Plex)).
@@ -338,81 +290,71 @@ func main() {
 	// processor
 	log.Info().Msg("Processor started")
 
-	targetsAvailable := false
-	targetsSize := len(targets)
-	for {
-		// sleep indefinitely when no targets setup
-		if targetsSize == 0 {
-			log.Warn().Msg("No targets initialised, processor stopped, triggers will continue...")
-			select {}
-		}
+	if len(targets) == 0 {
+		log.Warn().Msg("No targets initialised, processor stopped, triggers will continue...")
+		select {}
+	}
+	var workers sync.WaitGroup
+	for _, target := range targets {
+		workers.Go(func() {
+			if err := runTarget(context.Background(), proc, target, c.ScanDelay); err != nil {
+				log.Error().Err(err).Str("target_queue", target.id).
+					Msg("Target worker stopped, queued scans retained; other targets continue")
+			}
+		})
+	}
+	workers.Wait()
+	// Triggers continue accepting work if every target has a permanent failure.
+	select {}
+}
 
-		// target availability checker
-		if !targetsAvailable {
-			err = proc.CheckAvailability(targets)
-			switch {
-			case err == nil:
-				targetsAvailable = true
-			case errors.Is(err, autoscan.ErrFatal):
-				log.Error().
-					Err(err).
-					Msg("Fatal error occurred while checking target availability, processor stopped, triggers will continue...")
-
-				// sleep indefinitely
-				select {}
-			default:
-				log.Error().
-					Err(err).
-					Msg("Not all targets are available, retrying in 15 seconds...")
-
-				time.Sleep(15 * time.Second)
-				continue
+func configureTargets(c config, proc *processor.Processor) ([]configuredTarget, error) {
+	var targets []configuredTarget
+	occurrences := make(map[string]int)
+	appendTarget := func(kind, name, url string, rewrite []autoscan.Rewrite, target autoscan.Target) {
+		id := targetQueueID(kind, name, url, rewrite)
+		if name == "" {
+			occurrences[id]++
+			if occurrences[id] > 1 {
+				id = fmt.Sprintf("%s#%d", id, occurrences[id])
 			}
 		}
-
-		// process scans
-		err = proc.Process(targets)
-		switch {
-		case err == nil:
-			// Sleep scan-delay between successful requests to reduce the load on targets.
-			time.Sleep(c.ScanDelay)
-
-		case errors.Is(err, autoscan.ErrNoScans):
-			// No scans currently available, let's wait a couple of seconds
-			log.Trace().
-				Msg("No scans are available, retrying in 15 seconds...")
-
-			time.Sleep(15 * time.Second)
-
-		case errors.Is(err, autoscan.ErrAnchorUnavailable):
-			log.Error().
-				Err(err).
-				Msg("Not all anchor files are available, retrying in 15 seconds...")
-
-			time.Sleep(15 * time.Second)
-
-		case errors.Is(err, autoscan.ErrTargetUnavailable):
-			targetsAvailable = false
-			log.Error().
-				Err(err).
-				Msg("Not all targets are available, retrying in 15 seconds...")
-
-			time.Sleep(15 * time.Second)
-
-		case errors.Is(err, autoscan.ErrFatal):
-			// fatal error occurred, processor must stop (however, triggers must not)
-			log.Error().
-				Err(err).
-				Msg("Fatal error occurred while processing targets, processor stopped, triggers will continue...")
-
-			// sleep indefinitely
-			select {}
-
-		default:
-			// unexpected error
-			log.Fatal().
-				Err(err).
-				Msg("Failed processing targets")
-		}
+		targets = append(targets, configuredTarget{id: id, target: target})
 	}
+	for _, t := range c.Targets.Autoscan {
+		target, err := ast.New(t)
+		if err != nil {
+			return nil, fmt.Errorf("autoscan target: %w", err)
+		}
+		appendTarget("autoscan", t.Name, t.URL, t.Rewrite, target)
+	}
+	for _, t := range c.Targets.Plex {
+		target, err := plex.New(t)
+		if err != nil {
+			return nil, fmt.Errorf("plex target: %w", err)
+		}
+		appendTarget("plex", t.Name, t.URL, t.Rewrite, target)
+	}
+	for _, t := range c.Targets.Emby {
+		target, err := emby.New(t)
+		if err != nil {
+			return nil, fmt.Errorf("emby target: %w", err)
+		}
+		appendTarget("emby", t.Name, t.URL, t.Rewrite, target)
+	}
+	for _, t := range c.Targets.Jellyfin {
+		target, err := jellyfin.New(t)
+		if err != nil {
+			return nil, fmt.Errorf("jellyfin target: %w", err)
+		}
+		appendTarget("jellyfin", t.Name, t.URL, t.Rewrite, target)
+	}
+	ids := make([]string, len(targets))
+	for i, target := range targets {
+		ids[i] = target.id
+	}
+	if err := proc.ConfigureTargets(ids); err != nil {
+		return nil, fmt.Errorf("configure target queues (use distinct target names for duplicate URLs and rewrites): %w", err)
+	}
+	return targets, nil
 }

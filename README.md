@@ -290,10 +290,35 @@ The processor then saves the Scans to its datastore.
 
 *The processor uses SQLite as its datastore, feel free to hack around!*
 
-In a separate process, the processor selects Scans from the datastore.
-It will always group files belonging to the same folder together and it waits until all the files in that folder are older than the `minimum-age`, which defaults to 10 minutes.
+Each target has its own persistent queue and worker. Events for the same folder
+are combined into one queued scan per target, retaining the highest priority.
+The worker waits until the most recent event is older than `minimum-age`, which
+defaults to 10 minutes, before requesting a folder scan.
 
-When all files are older than the minimum age, then the processor will call all the configured targets in parallel to request a folder scan.
+An offline or stalled target retains its backlog while other targets continue.
+Successful targets are not rescanned when another target retries. Pending work
+survives Autoscan restarts. Existing shared-queue entries are assigned to each
+configured target when upgrading.
+
+Delivery is at least once: an abrupt stop after a server accepts a request but
+before Autoscan records completion can cause that request to be retried.
+
+Target HTTP requests time out after 30 seconds. Unavailable targets retry after
+15 seconds, or longer when the response specifies `Retry-After`. A permanent
+configuration or authentication error stops only that target's worker and retains
+its queued work for recovery after fixing the configuration and restarting.
+
+An event received during delivery remains queued for that target and starts a new
+minimum-age wait. Events received before delivery still combine into a single
+folder scan, including multiple episodes in the same season.
+
+Back up the database before upgrading to independent target queues. The upgrade
+moves pending shared-queue entries into the new target queues automatically. Older
+versions cannot read these queues. For a rollback, restore the pre-upgrade database
+and configuration, or drain all target queues, including dormant queues, before
+returning to an older binary.
+An older version's strict configuration parser also rejects the new optional
+`name` target settings.
 
 ### Anchor files
 
@@ -327,7 +352,7 @@ A snippet of the `config.yml` file:
 # override the minimum age to 30 minutes:
 minimum-age: 30m
 
-# override the delay between processed scans:
+# override each target's delay between processed scans:
 # defaults to 5 seconds
 scan-delay: 15s
 
@@ -367,6 +392,22 @@ Autoscan currently supports the following targets:
 - Jellyfin
 - Autoscan
 
+All targets accept an optional `name` for their persistent queue. Names must be
+unique within a target type. Without a name, queue identity depends on the target
+type, URL, and rewrite rules; rotating a token or password preserves its queue.
+Choose a name when initially configuring a target if its URL or rewrite rules may
+later change. Adding or changing a name creates a different queue identity.
+Existing configurations with identical unnamed targets remain accepted. Their
+separate queues use the targets' order within that group, so give them distinct
+names when initially configuring them if they need identities independent of
+their order.
+
+Removing a target leaves its existing queue dormant. Re-adding the same identity
+resumes that backlog. Dormant queues are excluded from scan statistics and receive
+no new events while their targets are absent.
+Newly configured targets receive new events; outstanding deliveries remain with
+the target identities that originally received them.
+
 Plex, Emby, and Jellyfin reject scans of an entire library root, including a root
 with a trailing slash. Submit a movie, show, or season folder instead. Rejection
 logs name the library and requested path; they affect only that target's delivery.
@@ -380,7 +421,8 @@ You can setup one or multiple Plex targets in the config:
 ```yaml
 targets:
   plex:
-    - url: https://plex.domain.tld # URL of your Plex server
+    - name: main-plex # Optional stable identity for the target's queue
+      url: https://plex.domain.tld # URL of your Plex server
       token: XXXX # Plex API Token
       rewrite:
         - from: /mnt/unionfs/Media/ # local file system
