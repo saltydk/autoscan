@@ -4,14 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"gopkg.in/natefinch/lumberjack.v2"
 
@@ -86,6 +84,8 @@ var (
 		Database    string        `type:"path" default:"${database_file}" env:"AUTOSCAN_DATABASE" help:"Database file path"`
 		Log         string        `type:"path" default:"${log_file}" env:"AUTOSCAN_LOG" help:"Log file path"`
 		Verbosity   int           `type:"counter" default:"0" short:"v" env:"AUTOSCAN_VERBOSITY" help:"Log level verbosity"`
+		LogFormat   string        `default:"text" env:"AUTOSCAN_LOG_FORMAT" help:"File log format: text or json"`
+		LogLevel    string        `default:"" env:"AUTOSCAN_LOG_LEVEL" help:"Explicit log level, overriding verbosity"`
 		HTTPTimeout time.Duration `default:"30s" env:"AUTOSCAN_HTTP_TIMEOUT" help:"Incoming HTTP read/write timeout; 0 disables"`
 	}
 )
@@ -127,29 +127,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// logger
-	logger := log.Output(io.MultiWriter(zerolog.ConsoleWriter{
-		TimeFormat: time.Stamp,
-		Out:        os.Stderr,
-	}, zerolog.ConsoleWriter{
-		TimeFormat: time.Stamp,
-		Out: &lumberjack.Logger{
-			Filename:   cli.Log,
-			MaxSize:    5,
-			MaxAge:     14,
-			MaxBackups: 5,
-		},
-		NoColor: true,
-	}))
-
-	switch {
-	case cli.Verbosity == 1:
-		log.Logger = logger.Level(zerolog.DebugLevel)
-	case cli.Verbosity > 1:
-		log.Logger = logger.Level(zerolog.TraceLevel)
-	default:
-		log.Logger = logger.Level(zerolog.InfoLevel)
+	// Retain readable file logs unless JSON was explicitly selected.
+	fileLog := &lumberjack.Logger{Filename: cli.Log, MaxSize: 5, MaxAge: 14, MaxBackups: 5}
+	defer fileLog.Close()
+	logger, err := buildLogger(os.Stderr, fileLog, cli.LogFormat, cli.Verbosity, cli.LogLevel)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
+	log.Logger = logger
 
 	// datastore
 	db, err := sql.Open("sqlite", cli.Database)

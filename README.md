@@ -414,6 +414,12 @@ once initialized. An offline media server does not prevent readiness because
 Autoscan can still receive and persist events. When `NOTIFY_SOCKET` is present,
 Autoscan sends systemd readiness and scan-stat status notifications.
 
+File logs retain the existing text format and rotation defaults. Select JSON
+file logs with `--log-format json` or `AUTOSCAN_LOG_FORMAT=json`; console logs
+remain readable text. `--log-level` or `AUTOSCAN_LOG_LEVEL` accepts an explicit
+level, such as `info`, `debug`, `trace`, or `warn`, and overrides the existing
+`-v`/`-vv` verbosity settings.
+
 Bernard logs a warning if a Drive sync is still running after 30 minutes. It
 continues waiting for that sync and preserves the existing prevention of
 overlapping syncs. The warning does not cancel or recover the job.
@@ -683,6 +689,8 @@ Autoscan's Docker image supports the following parameters.
 | `-e PUID=1000` | The UserID to run the Autoscan binary as |
 | `-e PGID=1000` | The GroupID to run the Autoscan binary as |
 | `-e AUTOSCAN_VERBOSITY=0` | The Autoscan logging verbosity level to use. (0 = info, 1 = debug, 2 = trace) |
+| `-e AUTOSCAN_LOG_FORMAT=text` | File log format. Set to `json` to opt in to JSON file logs. |
+| `-e AUTOSCAN_LOG_LEVEL=info` | Explicit log level, overriding verbosity when set. |
 | `-e AUTOSCAN_HTTP_TIMEOUT=30s` | Incoming HTTP read/write deadline. Set to `0` to disable request deadlines. |
 | `-v /config` | Autoscan's config and database file |
 
