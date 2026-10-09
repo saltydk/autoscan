@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/saltydk/autoscan"
 )
 
 const (
@@ -109,7 +111,7 @@ func (d *daemon) filteredFolder(name string, directory bool) (string, bool, erro
 		return "", false, err
 	}
 	rewritten := p.Rewriter(name)
-	if !p.Allowed(rewritten) {
+	if !autoscan.ValidScanPath(rewritten) || !p.Allowed(rewritten) {
 		return "", false, nil
 	}
 	if !directory {
