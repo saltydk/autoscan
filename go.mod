@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/l3uddz/bernard v0.5.1
 	github.com/m-rots/stubbs v1.1.0
 	github.com/oriser/regroup v0.0.0-20240925165441-f6bb0e08289e
