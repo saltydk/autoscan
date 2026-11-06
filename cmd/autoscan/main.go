@@ -251,7 +251,7 @@ func main() {
 
 	// scan stats
 	if c.ScanStats.Seconds() > 0 {
-		go scanStats(proc, c.ScanStats)
+		go scanStats(context.Background(), proc, c.ScanStats)
 	}
 
 	// display initialised banner
