@@ -84,13 +84,13 @@ func (c apiClient) Version() (string, error) {
 	return resp.MediaContainer.Version, nil
 }
 
-type library struct {
+type plexLibrary struct {
 	ID   int
 	Name string
 	Path string
 }
 
-func (c apiClient) Libraries() ([]library, error) {
+func (c apiClient) Libraries() ([]plexLibrary, error) {
 	reqURL := autoscan.JoinURL(c.baseURL, "library", "sections")
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
@@ -122,7 +122,7 @@ func (c apiClient) Libraries() ([]library, error) {
 	}
 
 	// process response
-	libraries := make([]library, 0)
+	libraries := make([]plexLibrary, 0)
 	for _, lib := range resp.MediaContainer.Libraries {
 		for _, folder := range lib.Sections {
 			libPath := folder.Path
@@ -132,7 +132,7 @@ func (c apiClient) Libraries() ([]library, error) {
 				libPath += "/"
 			}
 
-			libraries = append(libraries, library{
+			libraries = append(libraries, plexLibrary{
 				Name: lib.Name,
 				ID:   lib.ID,
 				Path: libPath,

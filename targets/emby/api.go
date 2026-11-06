@@ -74,12 +74,12 @@ func (c apiClient) Available() error {
 	return nil
 }
 
-type library struct {
+type embyLibrary struct {
 	Name string
 	Path string
 }
 
-func (c apiClient) Libraries() ([]library, error) {
+func (c apiClient) Libraries() ([]embyLibrary, error) {
 	// create request
 	reqURL := autoscan.JoinURL(c.baseURL, "emby", "Library", "SelectableMediaFolders")
 	req, err := http.NewRequest("GET", reqURL, nil)
@@ -109,7 +109,7 @@ func (c apiClient) Libraries() ([]library, error) {
 	}
 
 	// process response
-	libraries := make([]library, 0)
+	libraries := make([]embyLibrary, 0)
 	for _, lib := range resp {
 		for _, folder := range lib.Folders {
 			libPath := folder.Path
@@ -119,7 +119,7 @@ func (c apiClient) Libraries() ([]library, error) {
 				libPath += "/"
 			}
 
-			libraries = append(libraries, library{
+			libraries = append(libraries, embyLibrary{
 				Name: lib.Name,
 				Path: libPath,
 			})

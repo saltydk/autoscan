@@ -1,14 +1,10 @@
 package emby
 
 import (
-	"fmt"
-	"path"
-	"strings"
-	"sync"
-
 	"github.com/rs/zerolog"
 
 	"github.com/saltydk/autoscan"
+	"github.com/saltydk/autoscan/targets/internal/library"
 )
 
 type Config struct {
@@ -23,8 +19,7 @@ type Config struct {
 type target struct {
 	url       string
 	token     string
-	libraries []library
-	libraryMu sync.Mutex
+	libraries *library.Cache[embyLibrary]
 
 	log     zerolog.Logger
 	rewrite autoscan.Rewriter
@@ -48,32 +43,35 @@ func New(c Config) (autoscan.Target, error) {
 	api := newAPIClient(c.URL, c.Token, l)
 	api.responseLimit = limit
 
-	return &target{
+	t := &target{
 		url:   c.URL,
 		token: c.Token,
 
 		log:     l,
 		rewrite: rewriter,
 		api:     api,
-	}, nil
+	}
+	t.libraries = library.New(api.Libraries,
+		func(l embyLibrary) string { return l.Path }, func(l embyLibrary) string { return l.Name }, l)
+	return t, nil
 }
 
 func (t *target) Available() error {
 	if err := t.api.Available(); err != nil {
 		return err
 	}
-	_, err := t.loadLibraries()
-	return err
+	return t.libraries.Refresh()
 }
 
 func (t *target) Scan(scan autoscan.Scan) error {
 	// determine library for this scan
 	scanFolder := t.rewrite(scan.Folder)
 
-	lib, err := t.getScanLibrary(scanFolder)
+	libs, err := t.libraries.Match(scanFolder)
 	if err != nil {
 		return err
 	}
+	lib := libs[0]
 
 	l := t.log.With().
 		Str("path", scanFolder).
@@ -89,38 +87,4 @@ func (t *target) Scan(scan autoscan.Scan) error {
 
 	l.Info().Msg("Scan moved to target")
 	return nil
-}
-
-func (t *target) loadLibraries() ([]library, error) {
-	t.libraryMu.Lock()
-	defer t.libraryMu.Unlock()
-	if t.libraries == nil {
-		libraries, err := t.api.Libraries()
-		if err != nil {
-			return nil, err
-		}
-		t.libraries = libraries
-		t.log.Debug().Interface("libraries", libraries).Msg("Retrieved libraries")
-	}
-	return t.libraries, nil
-}
-
-func (t *target) getScanLibrary(folder string) (*library, error) {
-	libraries, err := t.loadLibraries()
-	if err != nil {
-		return nil, err
-	}
-	cleanFolder := path.Clean(folder)
-	for _, l := range libraries {
-		if l.Path != "" && cleanFolder == path.Clean(l.Path) {
-			return nil, fmt.Errorf("%s is the root of library %q; scan a movie, show, or season folder instead: %w", folder, l.Name, autoscan.ErrScanRejected)
-		}
-	}
-	for _, l := range libraries {
-		if strings.HasPrefix(cleanFolder, strings.TrimRight(path.Clean(l.Path), "/")+"/") {
-			return &l, nil
-		}
-	}
-
-	return nil, fmt.Errorf("%s: %w", folder, autoscan.ErrLibraryNotMatched)
 }

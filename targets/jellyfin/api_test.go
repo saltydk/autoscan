@@ -30,7 +30,7 @@ func TestAPIClientLibraries(t *testing.T) {
 		t.Fatalf("Libraries() error = %v", err)
 	}
 
-	want := []library{
+	want := []jellyfinLibrary{
 		{Name: "Movies", Path: "/media/movies/"},
 		{Name: "Movies", Path: "/media/extras/"},
 	}

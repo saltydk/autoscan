@@ -97,7 +97,7 @@ func TestMediaTargetsRejectLibraryRoots(t *testing.T) {
 			}
 			for _, folder := range []string{
 				"/media/series", "/media/series/", "/media//series/.",
-				"/media/series/Show/..", "/media/series/Special/",
+				"/media/series/Show/..",
 			} {
 				err := target.Scan(autoscan.Scan{Folder: folder})
 				if !errors.Is(err, autoscan.ErrScanRejected) || errors.Is(err, autoscan.ErrFatal) {
@@ -120,6 +120,92 @@ func TestMediaTargetsRejectLibraryRoots(t *testing.T) {
 			}
 			if got := libraryRequests.Load(); got != 1 {
 				t.Errorf("library discovery requests = %d, want 1", got)
+			}
+		})
+	}
+}
+
+// A nested library's root lies inside its parent library. v1.4.5 delivered it
+// there; v1.4.6 rejected it and acknowledged the delivery, dropping the scan.
+func TestMediaTargetsDeliverNestedLibraryRootToParent(t *testing.T) {
+	for _, targetType := range mediaTargets {
+		t.Run(targetType.name, func(t *testing.T) {
+			var scanURLs []string
+			var mu sync.Mutex
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/":
+					_, _ = io.WriteString(w, `{"MediaContainer":{"version":"1.40.0"}}`)
+				case targetType.libraries:
+					_, _ = io.WriteString(w, targetType.payload)
+				default:
+					mu.Lock()
+					scanURLs = append(scanURLs, r.URL.Path)
+					mu.Unlock()
+					w.WriteHeader(http.StatusNoContent)
+				}
+			}))
+			defer server.Close()
+			target, err := targetType.new(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := target.Scan(autoscan.Scan{Folder: "/media/series/Special/"}); err != nil {
+				t.Fatalf("Scan(nested root) = %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(scanURLs) != 1 || scanURLs[0] != targetType.scanPath {
+				t.Fatalf("scan requests = %v, want one to %s (the parent library only)", scanURLs, targetType.scanPath)
+			}
+		})
+	}
+}
+
+// Libraries were fetched once per process in v1.4.6, so a library added on the
+// server later had every scan skipped until autoscan restarted.
+func TestMediaTargetsAvailableRefreshesLibraries(t *testing.T) {
+	for _, targetType := range mediaTargets {
+		t.Run(targetType.name, func(t *testing.T) {
+			var payload atomic.Value
+			switch targetType.name {
+			case "plex":
+				payload.Store(`{"MediaContainer":{"Directory":[{"key":"9","title":"Other","Location":[{"path":"/other"}]}]}}`)
+			case "emby":
+				payload.Store(`[{"Name":"Other","SubFolders":[{"Path":"/other"}]}]`)
+			default:
+				payload.Store(`[{"Name":"Other","Locations":["/other"]}]`)
+			}
+			var scans atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/", "/System/Info", "/emby/System/Info":
+					_, _ = io.WriteString(w, `{"MediaContainer":{"version":"1.40.0"}}`)
+				case targetType.libraries:
+					_, _ = io.WriteString(w, payload.Load().(string))
+				default:
+					scans.Add(1)
+					w.WriteHeader(http.StatusNoContent)
+				}
+			}))
+			defer server.Close()
+			target, err := targetType.new(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scan := autoscan.Scan{Folder: "/media/series/Show/Season 01"}
+			if err := target.Scan(scan); !errors.Is(err, autoscan.ErrLibraryNotMatched) {
+				t.Fatalf("Scan() before library exists = %v", err)
+			}
+			payload.Store(targetType.payload)
+			if err := target.Available(); err != nil {
+				t.Fatalf("Available() = %v", err)
+			}
+			if err := target.Scan(scan); err != nil {
+				t.Fatalf("Scan() after library added = %v", err)
+			}
+			if got := scans.Load(); got != 1 {
+				t.Errorf("scan requests = %d, want 1", got)
 			}
 		})
 	}

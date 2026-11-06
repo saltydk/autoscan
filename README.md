@@ -479,10 +479,19 @@ Newly configured targets receive new events; outstanding deliveries remain with
 the target identities that originally received them.
 
 Plex, Emby, and Jellyfin reject scans of an entire library root, including a root
-with a trailing slash. Submit a movie, show, or season folder instead. Rejection
-logs name the library and requested path; they affect only that target's delivery.
-Paths outside a target's libraries are expected skips and are logged at debug
-level. Other targets still receive their own queued deliveries.
+with a trailing slash. Submit a movie, show, or season folder instead. A folder
+that is the root of one library but lies inside another, such as a nested library,
+is delivered to the containing library instead. Rejection logs name the library
+and requested path; they affect only that target's delivery.
+
+Library lists are refreshed whenever a target becomes available, at startup and
+after any delivery failure. A scan outside every known library triggers a refresh
+before it is skipped, unless the list was fetched within the last minute, so
+libraries added on the server are found without a restart. If a refresh fails,
+the target is treated as unavailable and the scan is retried rather than
+skipped. An empty library list never replaces one that was already retrieved.
+Skipped scans are summarized at info level at most once an hour. Other targets
+still receive their own queued deliveries.
 
 Plex, Emby, and Jellyfin limit decoded API responses to 10 MiB by default.
 Oversized responses retain queued work and retry with an error describing the

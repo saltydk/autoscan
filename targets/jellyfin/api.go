@@ -74,12 +74,12 @@ func (c apiClient) Available() error {
 	return nil
 }
 
-type library struct {
+type jellyfinLibrary struct {
 	Name string
 	Path string
 }
 
-func (c apiClient) Libraries() ([]library, error) {
+func (c apiClient) Libraries() ([]jellyfinLibrary, error) {
 	// create request
 	reqURL := autoscan.JoinURL(c.baseURL, "Library", "VirtualFolders")
 	req, err := http.NewRequest("GET", reqURL, nil)
@@ -107,7 +107,7 @@ func (c apiClient) Libraries() ([]library, error) {
 	}
 
 	// process response
-	libraries := make([]library, 0)
+	libraries := make([]jellyfinLibrary, 0)
 	for _, lib := range resp {
 		for _, folder := range lib.Locations {
 			libPath := folder
@@ -117,7 +117,7 @@ func (c apiClient) Libraries() ([]library, error) {
 				libPath += "/"
 			}
 
-			libraries = append(libraries, library{
+			libraries = append(libraries, jellyfinLibrary{
 				Name: lib.Name,
 				Path: libPath,
 			})
