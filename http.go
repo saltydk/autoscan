@@ -74,10 +74,12 @@ func HTTPStatusError(response *http.Response) error {
 		return nil
 	}
 
-	switch response.StatusCode {
-	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusNotFound,
-		http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable,
-		http.StatusGatewayTimeout:
+	// 404 and 421 come from reverse proxies whose routes or certificates are
+	// still loading; every 5xx, including proxy-specific 52x codes, is a server
+	// condition rather than a problem with the request.
+	switch code := response.StatusCode; {
+	case code == http.StatusRequestTimeout, code == http.StatusTooManyRequests,
+		code == http.StatusNotFound, code == http.StatusMisdirectedRequest, code >= 500:
 		return &retryAfterError{
 			err:   fmt.Errorf("%s: %w", response.Status, ErrTargetUnavailable),
 			delay: parseRetryAfter(response.Header.Get("Retry-After"), time.Now()),

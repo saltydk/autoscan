@@ -29,6 +29,9 @@ func TestHTTPStatusError(t *testing.T) {
 		{http.StatusBadGateway, ErrTargetUnavailable},
 		{http.StatusServiceUnavailable, ErrTargetUnavailable},
 		{http.StatusGatewayTimeout, ErrTargetUnavailable},
+		{http.StatusMisdirectedRequest, ErrTargetUnavailable},
+		{http.StatusNotImplemented, ErrTargetUnavailable},
+		{522, ErrTargetUnavailable},
 	} {
 		t.Run(http.StatusText(tt.status), func(t *testing.T) {
 			response := &http.Response{
