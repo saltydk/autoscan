@@ -458,8 +458,23 @@ names when initially configuring them if they need identities independent of
 their order.
 
 Removing a target leaves its existing queue dormant. Re-adding the same identity
-resumes that backlog. Dormant queues are excluded from scan statistics and receive
-no new events while their targets are absent.
+resumes that backlog. Dormant queues receive no new events while their targets are
+absent and are not counted as `remaining`; each startup logs a warning with the
+number of scans every dormant queue holds, and scan statistics report the total as
+`dormant`.
+
+When an unnamed target's URL or rewrite rules change, its identity changes too.
+On the next start Autoscan moves the old queue to the new identity when the change
+is unambiguous: within one target type, exactly one identity that was configured
+on the previous run is now missing and holds work, and exactly one configured
+identity is new and holds no work. Reverting the change moves the backlog back.
+This also applies when a `name` is first added. A target removed in an earlier run
+is never treated as renamed, so its queue waits for that target to be re-added.
+If several targets of one type change at once, their queues stay dormant and are
+reported at startup; change them one restart at a time, or name them, to keep
+their backlogs. The first start after upgrading has no record of previously
+configured targets, so do not change target URLs or rewrite rules in the same
+restart as the upgrade.
 Newly configured targets receive new events; outstanding deliveries remain with
 the target identities that originally received them.
 

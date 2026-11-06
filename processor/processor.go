@@ -99,6 +99,18 @@ func (p *Processor) ConfigureTargets(targetIDs []string) error {
 	if err := p.store.AssignLegacy(targetIDs); err != nil {
 		return err
 	}
+	adopted, dormant, err := p.store.AdoptRenamedQueues(targetIDs)
+	if err != nil {
+		return fmt.Errorf("adopt renamed target queues: %w", err)
+	}
+	for _, a := range adopted {
+		log.Info().Str("from_queue", a.from).Str("target_queue", a.to).Int("scans", a.scans).
+			Msg("Target identity changed, moved its queued scans to the new identity")
+	}
+	for _, d := range dormant {
+		log.Warn().Str("target_queue", d.id).Int("scans", d.scans).
+			Msg("Queued scans retained for a target that is no longer configured; re-add it, or give targets a name, to deliver them")
+	}
 	p.targetIDs = append([]string(nil), targetIDs...)
 	return nil
 }
@@ -108,6 +120,13 @@ func (p *Processor) ScansRemaining() (int, error) {
 	p.targetMu.RLock()
 	defer p.targetMu.RUnlock()
 	return p.store.TargetScansRemaining(p.targetIDs)
+}
+
+// DormantScans returns the scans queued for identities that are not configured.
+func (p *Processor) DormantScans() (int, error) {
+	p.targetMu.RLock()
+	defer p.targetMu.RUnlock()
+	return p.store.DormantScansRemaining(p.targetIDs)
 }
 
 // ScansProcessed returns the amount of scans processed

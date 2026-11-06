@@ -239,3 +239,206 @@ func TestTargetQueuesRetainDormantTargets(t *testing.T) {
 		t.Fatalf("dormant work was not restored: %v", err)
 	}
 }
+
+func queuedFolders(t *testing.T, db *sql.DB, targetID string) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT folder FROM target_scan WHERE target_id = ? ORDER BY folder`, targetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var folders []string
+	for rows.Next() {
+		var folder string
+		if err := rows.Scan(&folder); err != nil {
+			t.Fatal(err)
+		}
+		folders = append(folders, folder)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return folders
+}
+
+// Changing an unnamed target's URL changes its queue identity; v1.4.6 left the
+// old backlog dormant forever, which silently dropped it.
+func TestTargetQueueFollowsIdentityChange(t *testing.T) {
+	proc, db := queueProcessor(t, ":memory:", 0)
+	if err := proc.ConfigureTargets([]string{"plex:old-url", "emby:server"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, folder := range []string{"/media/TV/A", "/media/TV/B"} {
+		if err := proc.Add(autoscan.Scan{Folder: folder, Time: now().Add(-time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := proc.ConfigureTargets([]string{"plex:new-url", "emby:server"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := queuedFolders(t, db, "plex:new-url"); len(got) != 2 {
+		t.Fatalf("adopted queue = %v, want both scans", got)
+	}
+	if got := queuedFolders(t, db, "plex:old-url"); len(got) != 0 {
+		t.Fatalf("old queue still holds %v", got)
+	}
+	if got := queuedFolders(t, db, "emby:server"); len(got) != 2 {
+		t.Fatalf("other target queue changed: %v", got)
+	}
+	if remaining, err := proc.ScansRemaining(); err != nil || remaining != 4 {
+		t.Fatalf("remaining = %d, %v", remaining, err)
+	}
+}
+
+// Upgrading from v1.4.6 has no identity history, so autoscan cannot tell a
+// renamed target from a removed one; a drained queue must not take another
+// target's backlog.
+func TestTargetQueueNoAdoptionWithoutIdentityHistory(t *testing.T) {
+	proc, db := queueProcessor(t, ":memory:", 0)
+	if _, err := db.Exec(`INSERT INTO target_scan (target_id, folder, priority, time) VALUES ('plex:removed', '/media/TV/A', 0, ?)`, now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.ConfigureTargets([]string{"plex:drained"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := queuedFolders(t, db, "plex:drained"); len(got) != 0 {
+		t.Fatalf("drained target adopted a removed target's queue: %v", got)
+	}
+	if got := queuedFolders(t, db, "plex:removed"); len(got) != 1 {
+		t.Fatalf("removed target queue = %v, want retained", got)
+	}
+}
+
+func addScan(t *testing.T, proc *Processor, folder string) {
+	t.Helper()
+	if err := proc.Add(autoscan.Scan{Folder: folder, Time: now().Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func configure(t *testing.T, proc *Processor, ids ...string) {
+	t.Helper()
+	if err := proc.ConfigureTargets(ids); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A target removed in an earlier run keeps its queue for re-adding; a target
+// added later is not a rename of it.
+func TestTargetQueueRemovedThenOtherAddedKeepsBacklog(t *testing.T) {
+	proc, db := queueProcessor(t, ":memory:", 0)
+	configure(t, proc, "plex:a", "plex:b")
+	addScan(t, proc, "/media/TV/X")
+	if err := proc.ProcessTarget("plex:a", &recordingTarget{}); err != nil {
+		t.Fatal(err)
+	}
+	configure(t, proc, "plex:a")
+	configure(t, proc, "plex:a", "plex:c")
+	if got := queuedFolders(t, db, "plex:c"); len(got) != 0 {
+		t.Fatalf("unrelated new target took removed target's backlog: %v", got)
+	}
+	configure(t, proc, "plex:a", "plex:b", "plex:c")
+	if got := queuedFolders(t, db, "plex:b"); len(got) != 1 {
+		t.Fatalf("re-added target backlog = %v, want resumed", got)
+	}
+}
+
+// Reverting a mistaken URL edit must bring the backlog back to the original.
+func TestTargetQueueFollowsRevertedIdentityChange(t *testing.T) {
+	proc, db := queueProcessor(t, ":memory:", 0)
+	configure(t, proc, "plex:a")
+	addScan(t, proc, "/media/TV/X")
+	configure(t, proc, "plex:typo")
+	addScan(t, proc, "/media/TV/Y")
+	configure(t, proc, "plex:a")
+	if got := queuedFolders(t, db, "plex:a"); len(got) != 2 {
+		t.Fatalf("reverted target queue = %v, want both scans", got)
+	}
+	if got := queuedFolders(t, db, "plex:typo"); len(got) != 0 {
+		t.Fatalf("typo queue still holds %v", got)
+	}
+}
+
+func TestTargetQueueReportsDormantScans(t *testing.T) {
+	proc, _ := queueProcessor(t, ":memory:", 0)
+	configure(t, proc, "plex:a", "emby:b")
+	addScan(t, proc, "/media/TV/X")
+	configure(t, proc, "plex:a")
+	if got, err := proc.DormantScans(); err != nil || got != 1 {
+		t.Fatalf("dormant scans = %d, %v", got, err)
+	}
+}
+
+func TestTargetQueueAdoptionIsConservative(t *testing.T) {
+	t.Run("removed target stays dormant for re-adding", func(t *testing.T) {
+		proc, db := queueProcessor(t, ":memory:", 0)
+		if err := proc.ConfigureTargets([]string{"plex:a", "plex:b"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := proc.Add(autoscan.Scan{Folder: "/media/TV/A", Time: now().Add(-time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := proc.ConfigureTargets([]string{"plex:a"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := queuedFolders(t, db, "plex:b"); len(got) != 1 {
+			t.Fatalf("removed target queue = %v, want retained", got)
+		}
+	})
+	t.Run("ambiguous changes stay dormant", func(t *testing.T) {
+		proc, db := queueProcessor(t, ":memory:", 0)
+		if err := proc.ConfigureTargets([]string{"plex:a", "plex:b"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := proc.Add(autoscan.Scan{Folder: "/media/TV/A", Time: now().Add(-time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := proc.ConfigureTargets([]string{"plex:c", "plex:d"}); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"plex:a", "plex:b"} {
+			if got := queuedFolders(t, db, id); len(got) != 1 {
+				t.Errorf("%s queue = %v, want retained", id, got)
+			}
+		}
+		for _, id := range []string{"plex:c", "plex:d"} {
+			if got := queuedFolders(t, db, id); len(got) != 0 {
+				t.Errorf("%s adopted ambiguous work: %v", id, got)
+			}
+		}
+	})
+	t.Run("different kind is never adopted", func(t *testing.T) {
+		proc, db := queueProcessor(t, ":memory:", 0)
+		if err := proc.ConfigureTargets([]string{"plex:a"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := proc.Add(autoscan.Scan{Folder: "/media/TV/A", Time: now().Add(-time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := proc.ConfigureTargets([]string{"jellyfin:a"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := queuedFolders(t, db, "plex:a"); len(got) != 1 {
+			t.Fatalf("plex queue = %v, want retained", got)
+		}
+	})
+	t.Run("known empty target does not claim another's queue", func(t *testing.T) {
+		proc, db := queueProcessor(t, ":memory:", 0)
+		if err := proc.ConfigureTargets([]string{"plex:a", "plex:b"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := proc.Add(autoscan.Scan{Folder: "/media/TV/A", Time: now().Add(-time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := proc.ProcessTarget("plex:a", &recordingTarget{}); err != nil {
+			t.Fatal(err)
+		}
+		// plex:a is known and drained; plex:b is removed. plex:a must not take b's work.
+		if err := proc.ConfigureTargets([]string{"plex:a"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := queuedFolders(t, db, "plex:a"); len(got) != 0 {
+			t.Fatalf("known target adopted removed target's work: %v", got)
+		}
+	})
+}

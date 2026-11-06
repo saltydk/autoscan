@@ -26,8 +26,18 @@ func scanStats(ctx context.Context, proc *processor.Processor, interval time.Dur
 			log.Error().Err(err).Msg("Failed determining amount of remaining scans, retrying at next interval")
 			continue
 		}
+		dormant, err := proc.DormantScans()
+		if err != nil {
+			log.Error().Err(err).Msg("Failed determining amount of dormant scans, retrying at next interval")
+			continue
+		}
 		metrics := proc.Metrics()
-		log.Info().
+		event := log.Info()
+		if dormant > 0 {
+			// Queued for targets that are no longer configured; see the startup warnings.
+			event = event.Int("dormant", dormant)
+		}
+		event.
 			Int("remaining", sm).
 			Int64("received", metrics.Received).
 			Int64("processed", metrics.Processed).
