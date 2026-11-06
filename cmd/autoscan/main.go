@@ -270,18 +270,15 @@ func main() {
 		log.Warn().Msg("No targets initialised, processor stopped, triggers will continue...")
 		select {}
 	}
+	// Workers retry every target failure indefinitely and return only when
+	// their context is cancelled, which never happens for the process lifetime.
 	var workers sync.WaitGroup
 	for _, target := range targets {
 		workers.Go(func() {
-			if err := runTarget(context.Background(), proc, target, c.ScanDelay); err != nil {
-				log.Error().Err(err).Str("target_queue", target.id).
-					Msg("Target worker stopped, queued scans retained; other targets continue")
-			}
+			_ = runTarget(context.Background(), proc, target, c.ScanDelay)
 		})
 	}
 	workers.Wait()
-	// Triggers continue accepting work if every target has a permanent failure.
-	select {}
 }
 
 func configureTargets(c config, proc *processor.Processor) ([]configuredTarget, error) {
