@@ -86,7 +86,7 @@ var (
 		Verbosity   int           `type:"counter" default:"0" short:"v" env:"AUTOSCAN_VERBOSITY" help:"Log level verbosity"`
 		LogFormat   string        `default:"text" env:"AUTOSCAN_LOG_FORMAT" help:"File log format: text or json"`
 		LogLevel    string        `default:"" env:"AUTOSCAN_LOG_LEVEL" help:"Explicit log level, overriding verbosity"`
-		HTTPTimeout time.Duration `default:"30s" env:"AUTOSCAN_HTTP_TIMEOUT" help:"Incoming HTTP read/write timeout; 0 disables"`
+		HTTPTimeout time.Duration `default:"30s" env:"AUTOSCAN_HTTP_TIMEOUT" help:"Incoming HTTP request read timeout; 0 disables"`
 	}
 )
 

@@ -411,12 +411,13 @@ read from the persistent database.
 
 ### HTTP and logging options
 
-Incoming HTTP requests have a 5-second header deadline and 30-second read/write
-deadlines. Use `--http-timeout 60s` or `AUTOSCAN_HTTP_TIMEOUT=60s` to change the
-read/write deadlines. The header deadline is the smaller of this value and 5
+Incoming HTTP requests have a 5-second header deadline and a 30-second deadline
+for reading the request. Use `--http-timeout 60s` or `AUTOSCAN_HTTP_TIMEOUT=60s` to
+change the read deadline. The header deadline is the smaller of this value and 5
 seconds. Setting the value to `0` disables these request deadlines. Idle keep-alive
-connections close after 2 minutes. These limits can affect unusually slow webhook
-clients or large batches, which previously had no deadline.
+connections close after 2 minutes. Responses have no deadline, so a webhook that
+waits for the database, for example during a Bernard full sync, still receives
+its result.
 
 Autoscan binds all configured listeners before reporting startup complete.
 `/health` returns an empty response with status 503 during startup and status 200
@@ -701,7 +702,7 @@ Autoscan's Docker image supports the following parameters.
 | `-e AUTOSCAN_VERBOSITY=0` | The Autoscan logging verbosity level to use. (0 = info, 1 = debug, 2 = trace) |
 | `-e AUTOSCAN_LOG_FORMAT=text` | File log format. Set to `json` to opt in to JSON file logs. |
 | `-e AUTOSCAN_LOG_LEVEL=info` | Explicit log level, overriding verbosity when set. |
-| `-e AUTOSCAN_HTTP_TIMEOUT=30s` | Incoming HTTP read/write deadline. Set to `0` to disable request deadlines. |
+| `-e AUTOSCAN_HTTP_TIMEOUT=30s` | Incoming HTTP request read deadline. Set to `0` to disable request deadlines. |
 | `-v /config` | Autoscan's config and database file |
 
 Any other volumes can be referenced within Autoscan's config file `config.yml`, assuming it has been specified as a volume.

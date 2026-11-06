@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,7 +61,7 @@ func testHTTPServer(t *testing.T, handler http.Handler, timeout time.Duration) *
 func TestIncomingHTTPTimeoutsAndDisableOverride(t *testing.T) {
 	for _, timeout := range []time.Duration{0, 30 * time.Second} {
 		server := testHTTPServer(t, http.NotFoundHandler(), timeout)
-		if server.ReadTimeout != timeout || server.WriteTimeout != timeout || server.ReadHeaderTimeout != min(timeout, 5*time.Second) {
+		if server.ReadTimeout != timeout || server.WriteTimeout != 0 || server.ReadHeaderTimeout != min(timeout, 5*time.Second) {
 			t.Fatalf("timeout settings = %+v", server)
 		}
 	}
@@ -87,6 +88,25 @@ func TestIncomingHTTPTimeoutsAndDisableOverride(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("stalled request body was not timed out")
+	}
+}
+
+// Webhook handlers wait for the single SQLite connection, which a Bernard full
+// sync can hold for minutes. The scan is persisted either way, so cutting the
+// response made Sonarr/Radarr record a failed delivery that had succeeded.
+func TestSlowHandlerResponseIsNotCutOff(t *testing.T) {
+	server := testHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}), 200*time.Millisecond)
+	client := &http.Client{Timeout: 5 * time.Second}
+	res, err := client.Post("http://"+server.Addr+"/", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("slow handler response lost: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
 	}
 }
 

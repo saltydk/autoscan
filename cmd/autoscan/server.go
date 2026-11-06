@@ -49,10 +49,16 @@ func startHTTPServers(ctx context.Context, c config, handler http.Handler, timeo
 	}
 	servers := make([]*http.Server, 0, len(listeners))
 	for _, listener := range listeners {
+		// Read deadlines bound slow or stalled clients. There is deliberately no
+		// WriteTimeout: it also counts handler time, and webhook handlers wait for
+		// the single SQLite connection, which a Bernard full sync can hold for
+		// minutes. Cutting that response loses nothing but makes the sender record
+		// a failed delivery. Responses are a few bytes, so slow readers cannot
+		// hold a handler open.
 		server := &http.Server{
 			Addr: listener.Addr().String(), Handler: handler,
 			ReadHeaderTimeout: min(timeout, 5*time.Second),
-			ReadTimeout:       timeout, WriteTimeout: timeout, IdleTimeout: 2 * time.Minute,
+			ReadTimeout:       timeout, IdleTimeout: 2 * time.Minute,
 		}
 		servers = append(servers, server)
 		log.Info().Str("addr", server.Addr).Msg("HTTP listener bound")
