@@ -7,6 +7,15 @@
   ],
   "packageRules": [
     {
+      "description": "Tidy Go module files after dependency updates to satisfy CI",
+      "matchManagers": [
+        "gomod"
+      ],
+      "postUpdateOptions": [
+        "gomodTidy"
+      ]
+    },
+    {
       "description": "The base updater owns the verified runtime base image pins",
       "matchDatasources": [
         "docker"
