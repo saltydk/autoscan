@@ -1,16 +1,16 @@
 import importlib.util
-from pathlib import Path
 import socket
 import socketserver
 import struct
 import threading
 import unittest
-from unittest.mock import patch
 import urllib.error
-
+from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location(
-    "nonroot_runtime", Path(__file__).resolve().parents[1] / "scripts/test-nonroot-image.py"
+    "nonroot_runtime",
+    Path(__file__).resolve().parents[1] / "scripts/test-nonroot-image.py",
 )
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
@@ -36,21 +36,32 @@ class ReadinessTests(unittest.TestCase):
             thread.start()
             try:
                 with patch.object(runtime, "docker", return_value="true"):
-                    runtime.wait_for_server("starting-container", f"http://127.0.0.1:{server.server_address[1]}")
+                    runtime.wait_for_server(
+                        "starting-container",
+                        f"http://127.0.0.1:{server.server_address[1]}",
+                    )
                 self.assertEqual(server.requests, 2)
             finally:
                 server.shutdown()
                 thread.join()
 
     def test_fail_when_container_exits_during_startup(self):
-        with patch.object(runtime, "request", side_effect=urllib.error.URLError("connection refused")), \
-                patch.object(runtime, "docker", return_value="false"):
-            with self.assertRaisesRegex(AssertionError, "exited during startup"):
-                runtime.wait_for_server("exited-container", "http://127.0.0.1")
+        with (
+            patch.object(
+                runtime,
+                "request",
+                side_effect=urllib.error.URLError("connection refused"),
+            ),
+            patch.object(runtime, "docker", return_value="false"),
+            self.assertRaisesRegex(AssertionError, "exited during startup"),
+        ):
+            runtime.wait_for_server("exited-container", "http://127.0.0.1")
 
     def test_timeout_still_bounds_startup_retries(self):
-        with patch.object(runtime, "request", side_effect=TimeoutError), \
-                patch.object(runtime, "docker", return_value="true"), \
-                patch.object(runtime.time, "monotonic", side_effect=[0, 60]):
-            with self.assertRaisesRegex(AssertionError, "did not start"):
-                runtime.wait_for_server("unready-container", "http://127.0.0.1")
+        with (
+            patch.object(runtime, "request", side_effect=TimeoutError),
+            patch.object(runtime, "docker", return_value="true"),
+            patch.object(runtime.time, "monotonic", side_effect=[0, 60]),
+            self.assertRaisesRegex(AssertionError, "did not start"),
+        ):
+            runtime.wait_for_server("unready-container", "http://127.0.0.1")
