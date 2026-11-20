@@ -22,6 +22,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The scripts run on the runner's python3, tested by the build job; this
+  # job tests the oldest and newest supported Python releases.
+  python-bounds:
+    name: python-bounds (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python:
+          - '3.10'
+          - '3.15'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-sha || github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Record Python version
+        run: python3 -VV
+      - name: Run unit tests with warnings as errors
+        env:
+          PYTHONWARNINGS: error
+          PYTHONDEVMODE: '1'
+        run: |
+          set -o pipefail
+          python3 -W error -X dev -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/unittest.log"
+          # Leaks found during garbage collection are reported, not raised.
+          if grep -nE 'Exception ignored|[A-Za-z]+Warning: ' "$RUNNER_TEMP/unittest.log"; then
+            echo "::error::Python reported warnings or unraisable exceptions"
+            exit 1
+          fi
+      - name: Compile Python scripts with warnings as errors
+        run: python3 -W error -X dev -m compileall -q -f scripts tests
+
   build:
     runs-on: ubuntu-latest
     outputs:
@@ -35,9 +70,20 @@ jobs:
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
+      - name: Run unit tests with warnings as errors
+        env:
+          PYTHONWARNINGS: error
+          PYTHONDEVMODE: '1'
+        run: |
+          set -o pipefail
+          python3 -W error -X dev -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/unittest.log"
+          # Leaks found during garbage collection are reported, not raised.
+          if grep -nE 'Exception ignored|[A-Za-z]+Warning: ' "$RUNNER_TEMP/unittest.log"; then
+            echo "::error::Python reported warnings or unraisable exceptions"
+            exit 1
+          fi
       - name: Check image tooling and base
         run: |
-          python3 -m unittest discover -s tests -v
           python3 scripts/image.py base verify
           shellcheck scripts/test-image.sh
           shellcheck -s sh docker/master/run docker/release/run
