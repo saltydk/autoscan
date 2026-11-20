@@ -1,0 +1,80 @@
+name: Release Go vulnerabilities
+
+on:
+  schedule:
+    - cron: '7 6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/release-govulncheck.yml
+      - scripts/go_vulnerabilities.py
+      - scripts/release_go_issues.py
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autoscan-release-govulncheck
+  cancel-in-progress: false
+
+jobs:
+  govulncheck:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Resolve the published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Latest release tag '$tag' is not a semantic version"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ steps.release.outputs.tag }}
+          path: release
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: release/go.mod
+          cache: false
+      - name: Check the release with govulncheck
+        id: govulncheck
+        working-directory: release
+        env:
+          GOTOOLCHAIN: local
+        run: >-
+          python3 ../scripts/go_vulnerabilities.py
+          --tool golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          --output-directory "$RUNNER_TEMP/release-go-vulnerabilities"
+          || [ "$?" -eq 1 ]
+      - name: Reconcile release vulnerability issues
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          DRY_RUN: ${{ github.ref != 'refs/heads/master' }}
+        run: >-
+          python3 scripts/release_go_issues.py
+          --report-directory "$RUNNER_TEMP/release-go-vulnerabilities"
+          --release-tag "$RELEASE_TAG"
+          --dry-run "$DRY_RUN"
+          --output "$RUNNER_TEMP/release-go-vulnerabilities/issues.json"
+      - name: Retain release vulnerability evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-go-vulnerabilities-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-go-vulnerabilities/
+          if-no-files-found: warn

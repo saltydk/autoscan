@@ -41,9 +41,10 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Track the govulncheck release run by the shared Go checks",
+      "description": "Track the govulncheck release run by the master and release Go checks",
       "managerFilePatterns": [
-        "/^\\.github/actions/prepare-go/action\\.yml$/"
+        "/^\\.github/actions/prepare-go/action\\.yml$/",
+        "/^\\.github/workflows/release-govulncheck\\.yml$/"
       ],
       "matchStrings": [
         "golang\\.org/x/vuln/cmd/govulncheck@(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
