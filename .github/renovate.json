@@ -36,5 +36,19 @@
       ],
       "pinDigests": false
     }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the govulncheck release run by the shared Go checks",
+      "managerFilePatterns": [
+        "/^\\.github/actions/prepare-go/action\\.yml$/"
+      ],
+      "matchStrings": [
+        "golang\\.org/x/vuln/cmd/govulncheck@(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "golang.org/x/vuln",
+      "datasourceTemplate": "go"
+    }
   ]
 }

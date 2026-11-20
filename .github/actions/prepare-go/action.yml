@@ -34,7 +34,7 @@ runs:
       shell: bash
       run: >-
         python3 scripts/go_vulnerabilities.py
-        --tool golang.org/x/vuln/cmd/govulncheck@v1.8.0
+        --tool golang.org/x/vuln/cmd/govulncheck@v1.10.0
         --output-directory "$RUNNER_TEMP/go-vulnerabilities"
     - name: Retain Go vulnerability report
       if: ${{ always() && steps.govulncheck.outcome != 'skipped' }}
