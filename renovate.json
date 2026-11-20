@@ -50,11 +50,11 @@
       "minimumReleaseAge": "0 days"
     },
     {
-      "description": "cdnjs publishes no release timestamps, so a required timestamp would block these updates forever",
+      "description": "cdnjs publishes no release timestamps, so skip the release age wait instead of blocking or warning on every run",
       "matchDatasources": [
         "cdnjs"
       ],
-      "minimumReleaseAgeBehaviour": "timestamp-optional"
+      "minimumReleaseAge": "0 days"
     },
     {
       "description": "Use published tags for shared container security actions; PR checks skip the published-image report, so review these manually",
