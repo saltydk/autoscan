@@ -1,7 +1,10 @@
 import copy
+import io
 import json
 import tempfile
 import unittest
+import urllib.error
+from email.message import Message
 from pathlib import Path
 
 from scripts import release_go_issues as rgi
@@ -182,6 +185,28 @@ class ReleaseGoIssueTests(unittest.TestCase):
         store.issues.append({**copy.deepcopy(store.issues[0]), "number": 10})
         self.assertEqual(self.run_release(store, [ROW]), 2)
         self.assertEqual(len(store.writes), 1)
+
+
+class GitHubIssuesTests(unittest.TestCase):
+    def test_http_error_is_reported_and_closed(self):
+        error = urllib.error.HTTPError(
+            "https://api.github.com/repos/saltydk/autoscan/issues",
+            502,
+            "Bad Gateway",
+            Message(),
+            io.BytesIO(b'{"message": "Bad Gateway"}'),
+        )
+
+        def opener(request, timeout):
+            raise error
+
+        store = rgi.GitHubIssues("test-token", "saltydk/autoscan", opener=opener)
+
+        with self.assertRaisesRegex(RuntimeError, "HTTP 502") as raised:
+            store.request("/repos/saltydk/autoscan/issues")
+
+        self.assertIs(raised.exception.__cause__, error)
+        self.assertTrue(error.fp.closed)
 
 
 if __name__ == "__main__":

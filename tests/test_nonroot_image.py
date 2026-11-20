@@ -1,10 +1,12 @@
 import importlib.util
+import io
 import socket
 import socketserver
 import struct
 import threading
 import unittest
 import urllib.error
+from email.message import Message
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,6 +46,20 @@ class ReadinessTests(unittest.TestCase):
             finally:
                 server.shutdown()
                 thread.join()
+
+    def test_http_error_status_is_returned_and_closed(self):
+        error = urllib.error.HTTPError(
+            "http://127.0.0.1/triggers/manual",
+            401,
+            "Unauthorized",
+            Message(),
+            io.BytesIO(b"unauthorized"),
+        )
+        with patch.object(runtime.urllib.request, "urlopen", side_effect=error):
+            status = runtime.request("http://127.0.0.1/triggers/manual")
+
+        self.assertEqual(status, 401)
+        self.assertTrue(error.fp.closed)
 
     def test_fail_when_container_exits_during_startup(self):
         with (

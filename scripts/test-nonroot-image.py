@@ -41,7 +41,9 @@ def request(url, method="HEAD", authenticated=True):
         ) as response:
             return response.status
     except urllib.error.HTTPError as error:
-        return error.code
+        # The error owns the response; close it once the status is read.
+        with error:
+            return error.code
 
 
 def wait_for_server(container, url):

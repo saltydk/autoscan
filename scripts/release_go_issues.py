@@ -335,9 +335,11 @@ class GitHubIssues:
             with self.opener(request, timeout=30) as response:  # nosec B310
                 return json.loads(response.read() or b"null")
         except urllib.error.HTTPError as error:
-            raise RuntimeError(
-                f"GitHub API {method} {path} failed with HTTP {error.code}"
-            ) from error
+            # The error owns the response body; close it once inspected.
+            with error:
+                raise RuntimeError(
+                    f"GitHub API {method} {path} failed with HTTP {error.code}"
+                ) from error
 
     def list_issues(self) -> list[dict]:
         issues: list[dict] = []
