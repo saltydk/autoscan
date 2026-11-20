@@ -85,3 +85,18 @@ jobs:
       source-ref: ${{ github.ref }}
       release-tag: ${{ github.ref_name }}
     secrets: inherit
+
+  # One scan of every published tag per run, after all variants have published.
+  # Scanning inside docker.yml ran the same twelve-target scan once per variant
+  # and took the shared publication lock twice.
+  published-security:
+    needs: [image]
+    if: ${{ !cancelled() && needs.image.result != 'skipped' && needs.image.outputs.tags != '' && needs.image.outputs.tags != '[]' }}
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      artifact-prefix: release
+    secrets: inherit

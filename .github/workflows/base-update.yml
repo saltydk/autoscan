@@ -76,6 +76,7 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       source-sha: ${{ needs.update.outputs.source-sha }}
+      skip-published-security: true
     secrets: inherit
 
   latest:
@@ -96,4 +97,19 @@ jobs:
       source-sha: ${{ needs.update.outputs.source-sha }}
       source-ref: refs/heads/master
       release-tag: ${{ needs.update.outputs.release-tag }}
+    secrets: inherit
+
+  # One scan of every published tag per run, after all variants have published.
+  # Scanning inside docker.yml ran the same twelve-target scan once per variant
+  # and took the shared publication lock twice.
+  published-security:
+    needs: [update, master, latest]
+    if: ${{ !cancelled() && (needs.master.result != 'skipped' || needs.latest.result != 'skipped') }}
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      artifact-prefix: base-update
     secrets: inherit

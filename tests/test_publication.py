@@ -199,6 +199,17 @@ class PublicationCliTests(unittest.TestCase):
             1,
         )
 
+    def test_build_acceptance_requires_the_published_scan_when_it_ran(self):
+        base = ["summarize-build", "--build", "success", "--images", "success"]
+        for result, status in (
+            ("success", 0),
+            ("skipped", 0),
+            ("failure", 1),
+            ("cancelled", 1),
+        ):
+            with self.subTest(security=result):
+                self.assertEqual(self.call([*base, "--security", result]), status)
+
 
 class PublicationWorkflowTests(unittest.TestCase):
     def test_acceptance_jobs_check_out_scripts_before_invoking_them(self):
@@ -211,6 +222,23 @@ class PublicationWorkflowTests(unittest.TestCase):
                     acceptance.index("uses: actions/checkout@v7"),
                     acceptance.index("python3 -m scripts.publication"),
                 )
+
+    def test_each_publishing_run_scans_published_images_once(self):
+        workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+        callers = {
+            path.name: path.read_text().count(
+                "uses: ./.github/workflows/security-scan.yml"
+            )
+            for path in workflows.glob("*.yml")
+        }
+        # docker.yml runs once per variant, so a scan there would run twice per run.
+        self.assertEqual(callers.pop("docker.yml"), 0)
+        self.assertEqual(
+            {name: count for name, count in callers.items() if count},
+            {"build.yml": 1, "release.yml": 1, "base-update.yml": 1},
+        )
+        base_update = (workflows / "base-update.yml").read_text()
+        self.assertIn("skip-published-security: true", base_update)
 
     def test_publication_workflow_calls_files_without_inline_script_logic(self):
         root = Path(__file__).resolve().parents[1]

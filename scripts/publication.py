@@ -151,6 +151,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     build = commands.add_parser("summarize-build")
     build.add_argument("--build", required=True)
     build.add_argument("--images", required=True)
+    build.add_argument("--security", default="skipped")
     args = parser.parse_args(argv)
     try:
         if args.command == "promote":
@@ -165,6 +166,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise image.ImageError(
                     "binary and image acceptance stages did not succeed"
                 )
+            # Skipped when nothing was published, such as for pull requests.
+            if args.security not in {"success", "skipped"}:
+                raise image.ImageError("published image security scan did not succeed")
         elif not summarize(args):
             raise image.ImageError("image acceptance stages did not succeed")
     except (image.ImageError, OSError, ValueError) as error:

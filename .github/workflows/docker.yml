@@ -23,6 +23,10 @@ on:
         description: Published application release supplying stable binaries
         default: ''
         type: string
+    outputs:
+      tags:
+        description: Tags this variant publishes; every variant of a run shares the same publication policy
+        value: ${{ jobs.prepare.outputs.tags }}
 
 permissions:
   contents: read
@@ -263,15 +267,3 @@ jobs:
         run: |
           python3 -m scripts.publication summarize --prepare "$PREPARE" --tests "$TESTS" \
             --publish "$PUBLISH" --published "$PUBLISHED" --tags "$TAGS" --summary "$GITHUB_STEP_SUMMARY"
-
-  published-security:
-    needs: [prepare, publish-image]
-    if: ${{ !cancelled() && needs.publish-image.result == 'success' && needs.publish-image.outputs.published == 'true' }}
-    permissions:
-      contents: read
-      security-events: write
-      issues: write
-    uses: ./.github/workflows/security-scan.yml
-    with:
-      artifact-prefix: ${{ inputs.recipe }}-${{ inputs.variant }}
-    secrets: inherit
