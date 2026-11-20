@@ -789,6 +789,11 @@ their `Dockerfile`, `Dockerfile.nonroot`, and startup scripts. The nonroot base 
 pinned by its published multi-platform manifest digest. Development changes go into the master
 recipe. Both recipes copy a staged binary; binary selection happens in CI.
 
+The image and release tooling in `scripts/` runs on the system `python3` and
+supports Python 3.10–3.15. CI runs its unit tests on 3.10, 3.15 and the
+runner's `python3` with warnings as errors, and a weekly workflow repeats them
+on every GitHub-hosted Ubuntu runner image.
+
 Build development binaries and stage the Linux artifacts before building an image:
 
 ```bash
