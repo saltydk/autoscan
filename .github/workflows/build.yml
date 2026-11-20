@@ -90,7 +90,11 @@ jobs:
       - name: Check workflows
         uses: docker://rhysd/actionlint:1.7.12
         with:
-          args: '-ignore "unexpected key .queue. for .concurrency. section"'
+          # actionlint 1.7.12 predates create-github-app-token's client-id input (app-id is deprecated).
+          args: >-
+            -ignore "unexpected key .queue. for .concurrency. section"
+            -ignore "input .client-id. is not defined in action .actions/create-github-app-token@v3."
+            -ignore "missing input .app-id. which is required by action .actions/create-github-app-token@v3."
       - uses: ./.github/actions/prepare-go
       - name: Build snapshot
         run: task snapshot

@@ -1,0 +1,35 @@
+name: Release token check
+
+# Proves the release workflow's saltbox-automation token without publishing.
+# Token creation fails unless the app grants contents: write on this repository.
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/release-token-check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  token:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create release publishing token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.SALTBOX_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.SALTBOX_AUTOMATION_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Use the token against this repository
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}" --jq '"repository: " + .full_name'
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=1" --jq '"latest release: " + .[0].tag_name'
