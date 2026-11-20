@@ -28,14 +28,35 @@
       "enabled": false
     },
     {
-      "description": "Use published tags for shared container security actions",
+      "description": "Automerge digest and patch updates once every PR check passes",
+      "matchUpdateTypes": [
+        "digest",
+        "pinDigest",
+        "patch"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "rebase",
+      "platformAutomerge": false,
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Digest pins keep the current release and have no release timestamp, so a release age would block them forever",
+      "matchUpdateTypes": [
+        "pinDigest"
+      ],
+      "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Use published tags for shared container security actions; PR checks skip the published-image report, so review these manually",
       "matchManagers": [
         "github-actions"
       ],
       "matchPackageNames": [
         "saltyorg/github-actions"
       ],
-      "pinDigests": false
+      "pinDigests": false,
+      "automerge": false
     }
   ],
   "customManagers": [
