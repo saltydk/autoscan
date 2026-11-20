@@ -7,12 +7,13 @@
   ],
   "packageRules": [
     {
-      "description": "Tidy Go module files after dependency updates to satisfy CI",
+      "description": "Tidy Go module files and rewrite import paths on major updates to satisfy CI",
       "matchManagers": [
         "gomod"
       ],
       "postUpdateOptions": [
-        "gomodTidy"
+        "gomodTidy",
+        "gomodUpdateImportPaths"
       ]
     },
     {
