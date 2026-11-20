@@ -48,6 +48,13 @@
       "minimumReleaseAge": "0 days"
     },
     {
+      "description": "cdnjs publishes no release timestamps, so a required timestamp would block these updates forever",
+      "matchDatasources": [
+        "cdnjs"
+      ],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
       "description": "Use published tags for shared container security actions; PR checks skip the published-image report, so review these manually",
       "matchManagers": [
         "github-actions"
