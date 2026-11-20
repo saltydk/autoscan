@@ -8,7 +8,7 @@ import (
 
 	"github.com/rs/zerolog/hlog"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 type Config struct {

@@ -16,7 +16,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 // Bernard v0.5.1's ordered schema fixture isolates the handoff regression from

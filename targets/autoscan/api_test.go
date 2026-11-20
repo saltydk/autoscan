@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 func TestAPIClientRequestTimeout(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 type inotifyFilesystemFixture struct {

@@ -3,8 +3,8 @@ package emby
 import (
 	"github.com/rs/zerolog"
 
-	"github.com/saltydk/autoscan"
-	"github.com/saltydk/autoscan/targets/internal/library"
+	"github.com/saltyorg/autoscan"
+	"github.com/saltyorg/autoscan/targets/internal/library"
 )
 
 type Config struct {

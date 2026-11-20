@@ -1,4 +1,4 @@
-module github.com/saltydk/autoscan
+module github.com/saltyorg/autoscan
 
 go 1.27.4
 

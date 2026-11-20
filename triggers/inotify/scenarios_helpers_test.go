@@ -14,7 +14,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 // Native watcher workers have no stop API. Separate test processes contain their

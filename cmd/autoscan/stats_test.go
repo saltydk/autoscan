@@ -7,8 +7,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/saltydk/autoscan/migrate"
-	"github.com/saltydk/autoscan/processor"
+	"github.com/saltyorg/autoscan/migrate"
+	"github.com/saltyorg/autoscan/processor"
 )
 
 // A transient database error used to stop scan statistics for the rest of the

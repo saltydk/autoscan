@@ -12,10 +12,10 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/saltydk/autoscan"
-	"github.com/saltydk/autoscan/migrate"
-	"github.com/saltydk/autoscan/processor"
-	"github.com/saltydk/autoscan/targets/plex"
+	"github.com/saltyorg/autoscan"
+	"github.com/saltyorg/autoscan/migrate"
+	"github.com/saltyorg/autoscan/processor"
+	"github.com/saltyorg/autoscan/targets/plex"
 )
 
 type workerTarget struct {

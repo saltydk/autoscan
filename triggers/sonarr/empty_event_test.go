@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 func TestSonarrNoWorkDoesNotCallProcessor(t *testing.T) {

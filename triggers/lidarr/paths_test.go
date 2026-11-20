@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/saltydk/autoscan"
-	"github.com/saltydk/autoscan/triggers/lidarr"
+	"github.com/saltyorg/autoscan"
+	"github.com/saltyorg/autoscan/triggers/lidarr"
 )
 
 func TestDownloadRejectsBlankBatchEntry(t *testing.T) {

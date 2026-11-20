@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/saltydk/autoscan"
-	"github.com/saltydk/autoscan/migrate"
+	"github.com/saltyorg/autoscan"
+	"github.com/saltyorg/autoscan/migrate"
 
 	// sqlite3 driver
 	_ "modernc.org/sqlite"

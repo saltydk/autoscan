@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 func TestManualRejectsInvalidDirectoryBatchBeforeCallback(t *testing.T) {

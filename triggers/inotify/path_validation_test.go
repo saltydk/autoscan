@@ -3,7 +3,7 @@ package inotify
 import (
 	"testing"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 func TestRewritesCannotCreateInvalidInotifyFolders(t *testing.T) {

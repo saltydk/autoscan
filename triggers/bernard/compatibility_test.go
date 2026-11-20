@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 func TestBernardMediaFolderRewriteCompatibility(t *testing.T) {

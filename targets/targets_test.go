@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saltydk/autoscan"
-	autoscantarget "github.com/saltydk/autoscan/targets/autoscan"
-	"github.com/saltydk/autoscan/targets/emby"
-	"github.com/saltydk/autoscan/targets/jellyfin"
-	"github.com/saltydk/autoscan/targets/plex"
+	"github.com/saltyorg/autoscan"
+	autoscantarget "github.com/saltyorg/autoscan/targets/autoscan"
+	"github.com/saltyorg/autoscan/targets/emby"
+	"github.com/saltyorg/autoscan/targets/jellyfin"
+	"github.com/saltyorg/autoscan/targets/plex"
 )
 
 type mediaTarget struct {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 func TestAddEmptyBatchDoesNotAccessDatabase(t *testing.T) {

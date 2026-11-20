@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 type queuedScan struct {

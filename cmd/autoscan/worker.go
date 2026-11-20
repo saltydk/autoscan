@@ -11,8 +11,8 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/saltydk/autoscan"
-	"github.com/saltydk/autoscan/processor"
+	"github.com/saltyorg/autoscan"
+	"github.com/saltyorg/autoscan/processor"
 )
 
 type configuredTarget struct {

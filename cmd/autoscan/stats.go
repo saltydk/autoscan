@@ -7,7 +7,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/saltydk/autoscan/processor"
+	"github.com/saltyorg/autoscan/processor"
 )
 
 // scanStats reports queue statistics every interval until ctx is cancelled.

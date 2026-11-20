@@ -10,7 +10,7 @@ import (
 
 	"go.yaml.in/yaml/v4"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 type configScenarioPath = struct {

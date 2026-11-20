@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saltydk/autoscan"
-	"github.com/saltydk/autoscan/migrate"
+	"github.com/saltyorg/autoscan"
+	"github.com/saltyorg/autoscan/migrate"
 )
 
 type recordingTarget struct {

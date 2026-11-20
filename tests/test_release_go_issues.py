@@ -190,7 +190,7 @@ class ReleaseGoIssueTests(unittest.TestCase):
 class GitHubIssuesTests(unittest.TestCase):
     def test_http_error_is_reported_and_closed(self):
         error = urllib.error.HTTPError(
-            "https://api.github.com/repos/saltydk/autoscan/issues",
+            "https://api.github.com/repos/saltyorg/autoscan/issues",
             502,
             "Bad Gateway",
             Message(),
@@ -200,10 +200,10 @@ class GitHubIssuesTests(unittest.TestCase):
         def opener(request, timeout):
             raise error
 
-        store = rgi.GitHubIssues("test-token", "saltydk/autoscan", opener=opener)
+        store = rgi.GitHubIssues("test-token", "saltyorg/autoscan", opener=opener)
 
         with self.assertRaisesRegex(RuntimeError, "HTTP 502") as raised:
-            store.request("/repos/saltydk/autoscan/issues")
+            store.request("/repos/saltyorg/autoscan/issues")
 
         self.assertIs(raised.exception.__cause__, error)
         self.assertTrue(error.fp.closed)

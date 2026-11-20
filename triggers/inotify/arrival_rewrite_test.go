@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 func TestInotifyPopulatedArrivalRewriteDelivery(t *testing.T) {

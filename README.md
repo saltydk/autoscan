@@ -21,7 +21,7 @@ Autoscan also improves upon [Plex Autoscan](https://github.com/l3uddz/plex_autos
 
 ## Installing autoscan
 
-Autoscan offers [pre-compiled binaries](https://github.com/saltydk/autoscan/releases/latest) for both Linux and MacOS for each official release. In addition, we also offer a [Docker image](#docker)!
+Autoscan offers [pre-compiled binaries](https://github.com/saltyorg/autoscan/releases/latest) for both Linux and MacOS for each official release. In addition, we also offer a [Docker image](#docker)!
 
 Alternatively, you can build the Autoscan binary yourself.
 To build the autoscan CLI on your system, make sure:

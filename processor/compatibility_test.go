@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saltydk/autoscan"
-	"github.com/saltydk/autoscan/migrate"
+	"github.com/saltyorg/autoscan"
+	"github.com/saltyorg/autoscan/migrate"
 )
 
 // This fixture was created by autoscan at ddc2514 using modernc.org/sqlite

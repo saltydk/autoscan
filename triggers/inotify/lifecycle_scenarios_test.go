@@ -15,7 +15,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog"
 
-	"github.com/saltydk/autoscan"
+	"github.com/saltyorg/autoscan"
 )
 
 func TestInotifyLifecycleScenarioWatcherCloseStopsWorker(t *testing.T) {
@@ -126,7 +126,7 @@ func inotifyScenarioQueueWorkers() int {
 		buffer := make([]byte, size)
 		n := runtime.Stack(buffer, true)
 		if n < len(buffer) {
-			return strings.Count(string(buffer[:n]), "github.com/saltydk/autoscan/triggers/inotify.(*queue).worker(")
+			return strings.Count(string(buffer[:n]), "github.com/saltyorg/autoscan/triggers/inotify.(*queue).worker(")
 		}
 	}
 }
