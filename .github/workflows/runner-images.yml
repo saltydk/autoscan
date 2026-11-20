@@ -1,0 +1,96 @@
+name: Runner images
+
+# The workflow scripts run on the runner's own python3. This drift check runs
+# the Python checks on the system python3 of every GitHub-hosted Ubuntu image.
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autoscan-runner-images
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.runners.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The Available Images table in actions/runner-images is GitHub's
+      # published list of hosted images and their YAML labels.
+      - name: List GitHub-hosted Ubuntu runners
+        id: runners
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api -H 'Accept: application/vnd.github.raw' \
+            repos/actions/runner-images/contents/README.md > "$RUNNER_TEMP/runner-images.md"
+          python3 scripts/runner_images.py "$RUNNER_TEMP/runner-images.md" \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+
+  python:
+    needs: discover
+    name: python (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Record the runner's Python
+        id: python
+        env:
+          RUNNER_LABEL: ${{ matrix.runner }}
+          IMAGE_STATUS: ${{ matrix.status }}
+        run: |
+          set -euo pipefail
+          path=$(command -v python3)
+          version=$(python3 -c 'import platform; print(platform.python_version())')
+          supported=false
+          if python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 11))'; then
+            supported=true
+          fi
+          echo "supported=$supported" >> "$GITHUB_OUTPUT"
+          {
+            echo "## $RUNNER_LABEL"
+            echo
+            echo "- Image status: $IMAGE_STATUS"
+            echo "- \`$path\`: Python $version"
+            echo "- ImageOS: ${ImageOS:-unknown}, ImageVersion: ${ImageVersion:-unknown}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$supported" != true ]]; then
+            echo "- Below the supported Python 3.11 floor; the Python checks were not run." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Unsupported runner Python::$RUNNER_LABEL provides Python $version; the scripts require 3.11 or newer"
+          fi
+
+      - name: Run unit tests with warnings as errors
+        if: steps.python.outputs.supported == 'true'
+        env:
+          PYTHONWARNINGS: error
+          PYTHONDEVMODE: '1'
+        run: |
+          set -o pipefail
+          python3 -W error -X dev -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/unittest.log"
+          # Leaks found during garbage collection are reported, not raised.
+          if grep -nE 'Exception ignored|[A-Za-z]+Warning: ' "$RUNNER_TEMP/unittest.log"; then
+            echo "::error::Python reported warnings or unraisable exceptions"
+            exit 1
+          fi
+
+      - name: Compile Python scripts with warnings as errors
+        if: steps.python.outputs.supported == 'true'
+        run: python3 -W error -X dev -m compileall -q -f scripts tests
